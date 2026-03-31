@@ -7,7 +7,31 @@
 - Compare same goods/services across different brands/place of purchase
 
 ## Workflow
+### Add a purchase
+`PurchaseID`
 ### Add (a) record(s)
+
+Front end:
+F0. Pass in purchase details  
+F1. Ask user to provide:
+- `ID`: Obtain when uploaded to server
+- `ItemVarientID`: Scan / Type in -> Fetch -> Select, if not exist add new
+- `BatchCode`: Scan / Type in
+- `PurchaseID`: Parameter
+- `OriginalAmount` and `OriginalCurrency`: Type in Amount and Fetch - > Select currency
+- `DiscountAmount` and `DiscountCurrency`: Type in Amount and Fetch - > Select currency
+- `DiscountTypeID`: Fetch -> Select / Type in
+- `RecordAt`: Suggest Purchase Time / Type in
+- `SourceID`: UserID
+- `Notes`: Type in
+F2. Send json packages to server  
+F3. Wait for response from server  
+F4. If anything requires edit, jump to step F1 with all valid parameter  
+F5. Clear current records  
+F6. If user need to enter more records, jump to F1  
+F7. Exit
+
+
 
 ### Manage records
 
@@ -64,6 +88,7 @@ To do...
 | `Qty`        | Number  |       | N         | Quantity of item   |
 | `UnitID`  | Varchar | FK    | N         | Unit of quantity   |
 | `SKU`        | Varchar |       | Y         | Barcode ish things |
+| `Website` | Text | | Y | Website link if available |
 
 ### Unit
 | VariableName | Type    | PK/FK | Nullable? | Description                                      |

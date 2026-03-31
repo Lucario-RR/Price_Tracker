@@ -63,19 +63,19 @@ Backend
 ```
 
 ### Frontend Edit Common Process
-F0. Local parameter pass in
-F1. Fetch missing parameters from server as required 
-F2. Terminate if server returns error
+F0. Local parameter pass in  
+F1. Fetch missing parameters from server as required  
+F2. Terminate if server returns error  
 F3. Request user input  
-F3.1 Fetch as request
-F3.2 If not found, prompt new
-F3.3 Save current progress
-F3.4 Jump to add new
-F4. Send data to backend as json and files
-F5. Jump to F3 if backend suggest errors, or F8 to exit
-F6. Show save success message if backend replied
-F7. For Add, suggest new record
-F8. Exit
+  F3.1 Fetch as request  
+  F3.2 If not found, prompt new  
+  F3.3 Save current progress  
+  F3.4 Jump to add new  
+F4. Send data to backend as json and files  
+F5. Jump to F3 if backend suggest errors, or F8 to exit  
+F6. Show save success message if backend replied  
+F7. For Add, suggest new record  
+F8. Exit  
 
 ### Add / Edit a purchase
 `PurchaseID`

@@ -6,31 +6,92 @@
 - Visualise in tables, graphs, etc...
 - Compare same goods/services across different brands/place of purchase
 
-## Workflow
-### Add a purchase
+## Modules
+### Frontend
+```
+Home  
+  ├─ Add `PriceRecord` and `Purchase`  
+  │  ├─  
+  │  └─  
+  ├─ View `PriceRecord` and `Purchase`  
+  │  ├─  
+  │  └─  
+  ├─ Edit `Item and `ItemVarient`  
+  │  ├─  
+  │  └─  
+  ├─ Edit `Shop` and `Brand`  
+  │  ├─  
+  │  └─  
+  ├─ Edit `Address`  
+  │  ├─  
+  │  └─  
+  ├─ Setting  
+  │  ├─ Edit  
+  │  │  ├─ Unit  
+  │  │  ├─ Currency  
+  │  │  └─ CountryCode  
+  └─ BaseEditElements  
+     ├─ PriceRecord  
+     ├─ Purchase  
+     ├─ ItemVarient # Usually add a new one if anything has modified  
+     ├─ Item  
+     ├─ Category  
+     ├─ Brand  
+     ├─ Shop  
+     ├─ Address  
+     ├─ Unit  
+     ├─ Currency  
+     └─ CountryCode
+```
+### Backend
+API → Validation → Sanitisation → Business Logic → Database → Response
+```
+Backend  
+  ├─ API Layer 
+  │  ├─  
+  │  └─  
+  ├─ Validation 
+  │  ├─  
+  │  └─  
+  ├─ Service 
+  │  ├─  
+  │  └─  
+  └─ Database 
+     ├─ PriceRecord  
+
+     └─ CountryCode
+```
+
+### Frontend Edit Common Process
+F0. Local parameter pass in
+F1. Fetch missing parameters from server as required 
+F2. Terminate if server returns error
+F3. Request user input  
+F3.1 Fetch as request
+F3.2 If not found, prompt new
+F3.3 Save current progress
+F3.4 Jump to add new
+F4. Send data to backend as json and files
+F5. Jump to F3 if backend suggest errors, or F8 to exit
+F6. Show save success message if backend replied
+F7. For Add, suggest new record
+F8. Exit
+
+### Add / Edit a purchase
 `PurchaseID`
-### Add (a) record(s)
 
-Front end:
-F0. Pass in purchase details  
-F1. Ask user to provide:
-- `ID`: Obtain when uploaded to server
-- `ItemVarientID`: Scan / Type in -> Fetch -> Select, if not exist add new
+### Add / Edit a record
+- `ID`: Obtain when uploaded to server  
+- `ItemVarientID`: Scan / Type in -> Fetch -> Select, if not exist add new  
 - `BatchCode`: Scan / Type in
-- `PurchaseID`: Parameter
-- `OriginalAmount` and `OriginalCurrency`: Type in Amount and Fetch - > Select currency
-- `DiscountAmount` and `DiscountCurrency`: Type in Amount and Fetch - > Select currency
-- `DiscountTypeID`: Fetch -> Select / Type in
-- `RecordAt`: Suggest Purchase Time / Type in
-- `SourceID`: UserID
+- `SN`: Scan / Type in  
+- `PurchaseID`: Parameter  
+- `OriginalAmount` and `OriginalCurrency`: Type in Amount and Fetch - > Select currency  
+- `DiscountAmount` and `DiscountCurrency`: Type in Amount and Fetch - > Select currency  
+- `DiscountTypeID`: Fetch -> Select / Type in  
+- `RecordAt`: Suggest Purchase Time / Type in  
+- `SourceID`: UserID  
 - `Notes`: Type in
-F2. Send json packages to server  
-F3. Wait for response from server  
-F4. If anything requires edit, jump to step F1 with all valid parameter  
-F5. Clear current records  
-F6. If user need to enter more records, jump to F1  
-F7. Exit
-
 
 
 ### Manage records
@@ -42,7 +103,7 @@ F7. Exit
 ### Address management
 
 ### Visualization
-To do...
+
 
 ## Database Struceture
 ### Item
@@ -113,7 +174,8 @@ To do...
 | `ID`               | Varchar | PK    | N         |                                                                   |
 | `ItemVarientID`    | Varchar | FK    | N         |                                                                   |
 | `BatchCode`        | Varchar |       | Y         |                                                                   |
-| `PurchaseID`       | Varchar | FK    | N         |                                                                   |
+| `SN`               | Varchar |       | Y         |                                                                   |
+| `PurchaseID`       | Varchar | FK    | Y         |                                                                   |
 | `OriginalAmount`   | Number  |       | N         |                                                                   |
 | `OriginalCurrency` | Char(3) |       | N         |                                                                   |
 | `DiscountAmount`   | Number  |       | Y         |                                                                   |

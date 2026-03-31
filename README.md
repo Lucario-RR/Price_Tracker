@@ -204,3 +204,6 @@ F8. Exit
 | notes            | TEXT       |       | Yes       | Additional notes or delivery info |
 | full_text        | TEXT       |       | Yes       | Original unstructured address |
 | created_at       | TIMESTAMP  |       | No        | Record creation timestamp |
+
+# Reference
+[C4 Diagram](https://c4model.com/diagrams/system-context)

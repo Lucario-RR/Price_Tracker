@@ -236,72 +236,10 @@ F8. Exit
 
 
 ## API
-| Method   | Endpoint                       | Description                             | Version | Response | Request |
-|----------|--------------------------------|-----------------------------------------|---------|----------|---------|
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/PriceRecord`    | Get value(s) of an existing row         |         |          |         |
-| `POST`   | `/PriceTracker/PriceRecord`    | Add a new row in `PriceRecord`          |         |          |         |
-| `PATCH`  | `/PriceTracker/PriceRecord`    | Edit an existing row in `PriceRecord`   |         |          |         |
-| `DELETE` | `/PriceTracker/PriceRecord`    | Remove an existing row in `PriceRecord` |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/PurchaseRecord` |                                         |         |          |         |
-| `POST`   | `/PriceTracker/PurchaseRecord` |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/PurchaseRecord` |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/PurchaseRecord` |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/ItemVarient`    |                                         |         |          |         |
-| `POST`   | `/PriceTracker/ItemVarient`    |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/ItemVarient`    |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/ItemVarient`    |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/Item`           |                                         |         |          |         |
-| `POST`   | `/PriceTracker/Item`           |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/Item`           |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/Item`           |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/Category`       |                                         |         |          |         |
-| `POST`   | `/PriceTracker/Category`       |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/Category`       |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/Category`       |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/Brand`          |                                         |         |          |         |
-| `POST`   | `/PriceTracker/Brand`          |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/Brand`          |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/Brand`          |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/Shop`           |                                         |         |          |         |
-| `POST`   | `/PriceTracker/Shop`           |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/Shop`           |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/Shop`           |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/Address`        |                                         |         |          |         |
-| `POST`   | `/PriceTracker/Address`        |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/Address`        |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/Address`        |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/Unit`           |                                         |         |          |         |
-| `POST`   | `/PriceTracker/Unit`           |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/Unit`           |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/Unit`           |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-| `GET`    | `/PriceTracker/DiscountType`   |                                         |         |          |         |
-| `POST`   | `/PriceTracker/DiscountType`   |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/DiscountType`   |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/DiscountType`   |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          | `/user/`                       |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          | `/user/Setting`                |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          | `/admin/`                      |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          | `/security`                    |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          | `/file`                        |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
+The API can be separate to two parts: `PriceTrack` dedicated and general user and account control.  
+Please check the [API_Guide.md]() for more details on how to use them.
+
+
 
 
 

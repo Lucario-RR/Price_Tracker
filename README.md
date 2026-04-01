@@ -44,26 +44,27 @@ Home
      └─ CountryCode
 ```
 ### Backend
+
 API → Validation → Sanitisation → Business Logic → Database → Response
 ```
 Backend  
-  ├─ API Layer 
-  │  ├─ Get
+  ├─ API
+  │  ├─ Get: The GET method is used to retrieve data on a server.  
 	|	 |	├─  
 	|	 |	└─  
-  │  ├─ Post
+  │  ├─ Post: The POST method is used to create new resources.  
 	|	 |	├─  
 	|	 |	└─  
-  │  ├─ Put
+  │  ├─ Put: The PUT method is used to replace an existing resource with an updated version.  
+	|	 |	├─  
+	|	 |	└─  
+  │  ├─ Patch: The PATCH method is used to update an existing resource.  
+	|	 |	├─  
+	|	 |	└─  
+  │  ├─ Delete: The DELETE method is used to remove data from a database.  
 	|	 |	├─  
 	|	 |	└─  
   │  ├─ Head
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Delete
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Patch
 	|	 |	├─  
 	|	 |	└─  
   │  ├─ Options
@@ -211,6 +212,8 @@ F8. Exit
 | `SourceID`         | Varchar | FK    | N         | Who registe the record                                            |
 | `Notes`            | Text    |       | Y         |                                                                   |
 
+### DiscountType
+
 ### Address
 | VariableName     | Type        | PK/FK | Nullable? | Description |
 |------------------|------------|-------|-----------|-------------|
@@ -230,6 +233,42 @@ F8. Exit
 | notes            | TEXT       |       | Yes       | Additional notes or delivery info |
 | full_text        | TEXT       |       | Yes       | Original unstructured address |
 | created_at       | TIMESTAMP  |       | No        | Record creation timestamp |
+
+
+## API
+| Method   | Endpoint                       | Description                             | Version | Response | Request |
+|----------|--------------------------------|-----------------------------------------|---------|----------|---------|
+|          |                                |                                         |         |          |         |
+| `GET`    | `/PriceTracker/PriceRecord`    | Get value(s) of an existing row         |         |          |         |
+| `POST`   | `/PriceTracker/PriceRecord`    | Add a new row in `PriceRecord`          |         |          |         |
+| `PATCH`  | `/PriceTracker/PriceRecord`    | Edit an existing row in `PriceRecord`   |         |          |         |
+| `DELETE` | `/PriceTracker/PriceRecord`    | Remove an existing row in `PriceRecord` |         |          |         |
+|          |                                |                                         |         |          |         |
+|          | `/PriceTracker/PurchaseRecord` |                                         |         |          |         |
+|          | `/PriceTracker/ItemVarient`    |                                         |         |          |         |
+|          | `/PriceTracker/Item`           |                                         |         |          |         |
+|          | `/PriceTracker/Category`       |                                         |         |          |         |
+|          | `/PriceTracker/Brand`          |                                         |         |          |         |
+|          | `/PriceTracker/Shop`           |                                         |         |          |         |
+|          | `/PriceTracker/Address`        |                                         |         |          |         |
+|          | `/PriceTracker/Unit`           |                                         |         |          |         |
+|          | `/PriceTracker/DiscountType`   |                                         |         |          |         |
+|          | `/user/`                       |                                         |         |          |         |
+|          | `/user/Setting`                |                                         |         |          |         |
+|          | `/admin/`                      |                                         |         |          |         |
+|          | `/security`                    |                                         |         |          |         |
+|          | `/file`                        |                                         |         |          |         |
+|          |                                |                                         |         |          |         |
+|          |                                |                                         |         |          |         |
+|          |                                |                                         |         |          |         |
+|          |                                |                                         |         |          |         |
+
+
+
+
+
+
+
 
 # Reference
 [C4 Diagram](https://c4model.com/diagrams/system-context)

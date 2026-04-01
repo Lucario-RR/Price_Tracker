@@ -1,93 +1,690 @@
 # Price_Tracker
 
-## What it does
-- Add records of goods/servies price at different time
-- Add / Remove goods/servies
-- Visualise in tables, graphs, etc...
-- Compare same goods/services across different brands/place of purchase
+## What it does (By ChatGPT)
+
+### 🧭 1. Core Feature Categories (System Modules)
+
+#### 📦 Item & Catalog Module
+
+* Browse items, variants, brands, categories
+* Normalize comparison (unit conversion via `Unit`)
+* Handle SKU / product matching
+
+#### 💰 Price Tracking Module
+
+* Record prices (`PriceRecord`)
+* Link to purchase (`PurchaseRecord`)
+* Track discounts
+
+#### 📊 Analytics & Comparison Module
+
+* Compare prices across shops
+* Historical trends
+* Unit price normalization (very important)
+
+#### 🏪 Shop Module
+
+* Manage shops and locations
+* Link prices to shops
+
+#### 👤 User & Source Module
+
+* Track who submitted data (`SourceID`)
+* Trust / validation system
+
+
+### 👀 2. Guest Functions (No Login)
+
+Goal: **explore + compare**, minimal friction
+
+#### 🔍 Search & Browse
+
+* Search item by name / category
+* Filter by:
+
+  * Category (`CategoryID`)
+  * Brand (`BrandID`)
+  * Shop
+* View item details:
+
+  * Specifications
+  * Variants (size, unit)
+
+#### 📊 Price Comparison
+
+* Compare same item across shops
+  👉 Example:
+
+  * “Milk 1L across Tesco, Aldi, Lidl”
+
+* Compare variants using unit normalization
+  👉 £1.50 / 1L vs £2.50 / 2L → show £/L
+
+#### 📈 Price History (READ ONLY)
+
+* View price trend of an item variant
+* Compare **two items price history** (your example)
+
+👉 Example function:
+
+```
+ComparePriceHistory(itemVariantA, itemVariantB)
+→ returns time-series graph
+```
+
+#### 🏪 Shop View
+
+* View shop details
+* Show:
+
+  * Latest prices
+  * Cheapest items in that shop
+
+#### ⭐ Insights (basic)
+
+* Cheapest shop for an item
+* Average price
+* Price volatility
+
+---
+
+### 👤 3. Registered User Functions
+
+Goal: **contribute + personalize**
+
+#### 🧾 Data Contribution
+
+* Add purchase record (`PurchaseRecord`)
+* Upload receipt (link to `FileID`)
+* Add price record (`PriceRecord`)
+* Add new item / variant if missing
+
+👉 Important logic:
+
+* Auto-suggest existing item to avoid duplicates
+
+#### ✏️ Edit & Manage Own Data
+
+* Edit submitted prices
+* Delete incorrect entries
+* Add notes (e.g. “clearance sale”)
+
+#### 🔔 Tracking & Alerts
+
+* Track item price:
+
+  * “Notify me when milk < £1”
+
+* Watchlist:
+
+  * Items
+  * Shops
+
+#### 📊 Advanced Comparison
+
+* Multi-item comparison table
+  👉 Example:
+
+  ```
+  CompareItems([milk_1L, milk_2L, milk_500ml])
+  ```
+
+* Basket comparison:
+
+  * Cheapest shop for a list of items
+
+#### 📈 Personal Analytics
+
+* Spending history
+* Price trends of frequently bought items
+
+#### 🏷️ Smart Features
+
+* Auto unit conversion:
+
+  * g ↔ kg, ml ↔ L
+* Detect abnormal price:
+
+  * Flag outliers
+
+#### 🤝 Community Features (optional but powerful)
+
+* Upvote/downvote price records
+* Trust score for contributors
+* Report incorrect data
+
+
+### 🛠️ 4. Admin Functions
+
+Goal: **data integrity + system control**
+
+#### 🧹 Data Moderation
+
+* Approve/reject new:
+
+  * Items
+  * Variants
+  * Brands
+* Detect duplicates:
+
+  * Same item created twice
+
+👉 Example:
+
+```
+MergeItem(itemA, itemB)
+```
+
+#### 🔍 Data Validation
+
+* Flag suspicious prices:
+
+  * Too low/high vs average
+* Validate receipt uploads
+
+#### 🏪 Shop Management
+
+* Add/edit shops
+* Link to `Address`
+* Verify shop legitimacy
+
+#### 🧾 Price Record Management
+
+* Bulk edit/delete records
+* Fix incorrect unit mappings
+
+#### 📊 System Analytics
+
+* Most tracked items
+* Most active users
+* Price trends across regions
+
+#### ⚙️ Configuration
+
+* Manage:
+
+  * Discount types
+  * Units & conversions
+  * Categories hierarchy
+
+#### 🔐 Security
+
+* Monitor:
+
+  * SQL injection attempts
+  * Abuse of API
+* Rate limiting
+* User banning
+
+---
+
+### 🧠 5. Advanced / Smart Features (High Value)
+
+These are what make your system stand out:
+
+#### 🧮 Unit Price Engine (VERY IMPORTANT)
+
+Core function:
+
+```
+NormalizePrice(price, qty, unit) → price per base unit
+```
+
+Uses:
+
+* `Unit.BaseUnitID`
+
+#### 🧠 Item Matching / Deduplication
+
+* Detect:
+
+  * “Coca Cola 500ml” vs “Coke 0.5L”
+* Use:
+
+  * Name similarity
+  * SKU
+
+#### 🛒 Basket Optimization
+
+```
+FindCheapestCombination(itemList, shops)
+```
+
+→ “Buy milk from Aldi, bread from Tesco”
+
+#### 📉 Price Prediction (future)
+
+* Predict price trends
+* Detect sales cycles
+
+
+### 🧩 6. API-Level Function Examples
+
+These align directly with your DB:
+
+#### Item APIs
+
+* `GET /items?name=milk`
+* `GET /item/{id}/variants`
+
+#### Price APIs
+
+* `GET /price-history?itemVariantID=...`
+* `POST /price-record`
+
+#### Comparison APIs
+
+* `GET /compare?items=[...]`
+* `GET /cheapest?itemID=...`
+
+#### Analytics APIs
+
+* `GET /price-trend`
+* `GET /unit-price`
+
+
+### ⚠️ 7. Key Design Considerations (Important)
+
+#### 1. Unit Normalization
+
+Without this, comparisons are meaningless.
+
+#### 2. Duplicate Prevention
+
+* Same item created multiple times = biggest risk
+
+#### 3. Trust System
+
+* Not all user-submitted prices are reliable
+
+#### 4. SQL Injection Risk
+
+Since you mentioned it:
+
+* Always use prepared statements
+* Never trust:
+
+  * item name
+  * notes
+  * search filters
+
+#### 5. Performance
+
+* Price history queries can get heavy
+  → Use indexing on:
+
+  * `ItemVarientID`
+  * `RecordAt`
+
 
 ## Modules
-### Frontend
+### Frontend Navication Structure
 ```
-Home  
-  ├─ Add `PriceRecord` and `Purchase`  
-  │  ├─  
-  │  └─  
-  ├─ View `PriceRecord` and `Purchase`  
-  │  ├─  
-  │  └─  
-  ├─ Edit `Item and `ItemVarient`  
-  │  ├─  
-  │  └─  
-  ├─ Edit `Shop` and `Brand`  
-  │  ├─  
-  │  └─  
-  ├─ Edit `Address`  
-  │  ├─  
-  │  └─  
-  ├─ Setting  
-  │  ├─ Edit  
-  │  │  ├─ Unit  
-  │  │  ├─ Currency  
-  │  │  └─ CountryCode  
-  └─ BaseEditElements  
-     ├─ PriceRecord  
-     ├─ Purchase  
-     ├─ ItemVarient # Usually add a new one if anything has modified  
-     ├─ Item  
-     ├─ Category  
-     ├─ Brand  
-     ├─ Shop  
-     ├─ Address  
-     ├─ Unit  
-     ├─ Currency  
-     └─ CountryCode
+Home
+ ├── Search Results
+ │     └── Item Detail
+ │            ├── Price Comparison
+ │            ├── Price History
+ │            └── Add Price
+ │
+ ├── Compare (multi-item)
+ ├── Shops
+ │     ├── Shop Detail
+ │     └── Search Shop
+ │
+ ├── Dashboard (user only)
+ │     ├── Watchlist
+ │     ├── My Records
+ │     └── Insights
+ │
+ ├── Admin Panel (admin only)
+ │
+ └── Auth (Login/Register)
 ```
+
+### 🏠 2. Home Page (Entry Point)
+
+#### 🎯 Goal:
+
+Fast search + discovery
+
+#### 🧩 Components:
+
+* 🔍 Search bar (primary focus)
+* 🏷 Category shortcuts
+* 📊 Trending items
+* 💸 “Recently cheapest” items
+* 🏪 Popular shops
+
+#### 🔁 User Actions:
+
+* Search → go to **Search Results**
+* Click item → go to **Item Detail**
+* Click category → filtered search
+
+
+### 🔍 3. Search Results Page
+
+#### 🎯 Goal:
+
+Help user find the **correct item / variant**
+
+#### 🧩 Components:
+
+* Filters:
+
+  * Category
+  * Brand
+  * Unit (e.g. L, kg)
+* Result list:
+
+  * Item name
+  * Variant (e.g. 1L, 500g)
+  * Lowest price preview
+  * Shop preview
+
+#### 🔁 User Actions:
+
+* Click item → **Item Detail**
+* Refine filters → reload results
+
+#### ⚡ Logic:
+
+* Backend aggregates:
+
+  ```
+  MIN(price) GROUP BY ItemVariant
+  ```
+
+
+### 📦 4. Item Detail Page (Core Page)
+
+This is your **most important page**.
+
+#### 🧩 Layout (tab-based)
+
+##### 🧾 Header
+
+* Item name + specification
+* Category breadcrumb
+* Variant selector (VERY IMPORTANT)
+
+#### 📊 Tab 1: Price Comparison (Default)
+
+##### Components:
+
+* Table:
+  | Shop | Price | Unit Price | Last Updated | Discount |
+* Sort:
+
+  * Cheapest
+  * Nearest (future)
+* Highlight:
+
+  * 🟢 Cheapest
+  * 🔴 Expensive
+
+##### ⚡ Logic:
+
+* Normalize price using `Unit`
+* Show:
+
+  ```
+  price / base_unit
+  ```
+
+
+#### 📈 Tab 2: Price History
+
+##### Components:
+
+* Line chart (time vs price)
+* Filters:
+
+  * Shop
+  * Time range
+
+👉 Example:
+
+* Tesco vs Aldi milk price over time
+
+
+#### ⚖️ Tab 3: Compare Variants
+
+##### Components:
+
+* Table:
+  | Variant | Qty | Price | Unit Price |
+* Helps answer:
+  → “Is 2L cheaper than 1L?”
+
+
+#### ➕ Tab 4: Add Price (User only)
+
+##### Components:
+
+* Form:
+
+  * Shop
+  * Price
+  * Discount
+  * Date
+  * Upload receipt
+
+##### ⚡ UX:
+
+* Auto-fill item variant
+* Suggest recent shops
+
+
+### ⚖️ 5. Compare Page (Multi-Item)
+
+#### 🎯 Goal:
+
+Compare **different items together**
+
+#### 🧩 Components:
+
+* Add items (search + select)
+* Comparison table:
+
+| Item | Shop | Price | Unit Price |
+| ---- | ---- | ----- | ---------- |
+
+#### 🔁 User Actions:
+
+* Add/remove items dynamically
+* Sort by cheapest
+
+
+### 🏪 6. Shop Page
+
+#### 🧩 Shop List
+
+* List of shops
+* Filter by location (future)
+
+#### 🏪 Shop Detail Page
+
+##### Components:
+
+* Shop info
+* Cheapest items in this shop
+* Recent price updates
+
+##### 🔁 Actions:
+
+* Click item → Item Detail
+
+
+### 👤 7. User Dashboard
+
+#### 🧭 Sections
+
+
+#### ⭐ Watchlist
+
+* Tracked items
+* Show:
+
+  * Current lowest price
+  * Price change
+
+#### 🧾 My Records
+
+* List of submitted prices
+* Edit / delete
+
+
+#### 📊 Insights
+
+* Spending summary
+* Price trends of tracked items
+
+
+### 🔐 8. Auth Pages
+
+#### Login / Register
+
+* Simple forms
+* Optional:
+
+  * Social login
+
+
+### 🛠️ 9. Admin Panel
+
+#### 🧩 Sections:
+
+##### 📦 Item Management
+
+* Approve / merge items
+
+##### 💰 Price Records
+
+* View suspicious entries
+* Bulk delete/edit
+
+##### 🏪 Shops
+
+* Add/edit shops
+
+##### ⚙️ Config
+
+* Units
+* Categories
+* Discount types
+
+
+### 🔁 10. Key User Journeys
+
+#### 🧭 Journey 1: Guest Comparing Prices
+
+```
+Home
+ → Search "milk"
+ → Search Results
+ → Item Detail
+ → View cheapest shop
+ → View price history
+```
+
+
+#### 🧭 Journey 2: User Adding Price
+
+```
+Login
+ → Search item
+ → Item Detail
+ → Add Price
+ → Submit
+ → Redirect to updated comparison
+```
+
+#### 🧭 Journey 3: Smart Shopper
+
+```
+Compare Page
+ → Add multiple items
+ → View cheapest shops
+ → Decide where to buy
+```
+
+
+#### 🧭 Journey 4: Contributor Loop
+
+```
+Dashboard
+ → My Records
+ → Add new price
+ → Gain trust score (future)
+```
+
+
+### 🧠 11. UX Design Principles (Important)
+
+#### 1. Minimize Friction
+
+* Search-first design
+* Don’t force login for browsing
+
+#### 2. Make Comparison Obvious
+
+* Always show:
+
+  * Cheapest
+  * Unit price
+
+#### 3. Reduce Data Errors
+
+* Autocomplete:
+
+  * Item
+  * Shop
+
+#### 4. Handle Complexity Invisibly
+
+* Users shouldn’t think about:
+
+  * Units
+  * Variants
+    → system handles it
+
+#### 5. Mobile-Friendly
+
+Most users will check prices in-store.
+
+### ⚡ 12. Suggested Frontend Tech Structure
+
+#### Pages (React-style example)
+
+```
+/pages
+  Home
+  SearchResults
+  ItemDetail
+  Compare
+  Shop
+  Dashboard
+  Admin
+```
+
+#### Components
+
+```
+SearchBar
+ItemCard
+PriceTable
+PriceChart
+VariantSelector
+```
+
+
+
 ### Backend
 
 API → Validation → Sanitisation → Business Logic → Database → Response
-```
-Backend  
-  ├─ API
-  │  ├─ Get: The GET method is used to retrieve data on a server.  
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Post: The POST method is used to create new resources.  
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Put: The PUT method is used to replace an existing resource with an updated version.  
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Patch: The PATCH method is used to update an existing resource.  
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Delete: The DELETE method is used to remove data from a database.  
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Head
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Options
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Connect
-	|	 |	├─  
-	|	 |	└─  
-  │  ├─ Trace
-	|	 |	├─  
-	|	 |	└─  
-  │  └─  ???
-  ├─ Validation 
-  │  ├─  
-  │  └─  
-  ├─ Service 
-  │  ├─  
-  │  └─  
-  └─ Database 
-     ├─ PriceRecord  
 
-     └─ CountryCode
-```
 
 ### Frontend Edit Common Process
 F0. Local parameter pass in  
@@ -132,119 +729,9 @@ F8. Exit
 ### Visualization
 
 
-## Database Struceture
-### Item
-| VariableName    | Type    | PK/FK | Nullable? | Description                                                                                                                                        |
-|-----------------|---------|-------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ID`            | Varchar | PK    | N         | Local unique id                                                                                                                                    |
-| `CategoryID`    | Varchar | FK    | Y         | Category of goods/services                                                                                                                         |
-| `Name`          | Varchar |       | N         | Name of the goods/services                                                                                                                         |
-| `Specification` | Varchar |       | Y         | Spec of the item, e.g. pork belly can be cut in slices or uncut. Quantity does not include in this field, i.e. milk 1L or 2L share same item milk. |
-| `Notes`         | Varchar |       | Y         | More notes                                                                                                                                         |
-| `CreateAt`      | Varchar |       | N         | Timestamp of first creation                                                                                                                        |
-### Category
-| VariableName | Type    | PK/FK | Nullable? | Description                              |
-|--------------|---------|-------|-----------|------------------------------------------|
-| `ID`         | Varchar | PK    | N         | An uid for category                      |
-| `FatherID`   | Varchar | FK    | Y         | Big category of the current sub category |
-| `Name`       | Varchar |       | N         | Name of the category                     |
-| `Notes`      | Varchar |       | Y         | Additional Notes                         |
-
-### Brand
-| VariableName | Type    | PK/FK | Nullable? | Description                                 |
-|--------------|---------|-------|-----------|---------------------------------------------|
-| `ID`         | Varchar | PK    | N         |                                             |
-| `Name`       | Varchar |       | N         |                                             |
-| `Region`     | Char(3) |       | Y         | Use ISO 3166 Numeric code                   |
-| `LocarionID` | Varchar | FK    | Y         | Link to a detailed address in another table |
-
-### Shop
-| VariableName | Type    | PK/FK | Nullable? | Description               |
-|--------------|---------|-------|-----------|---------------------------|
-| `ID`         | Varchar | PK    | N         | UID of place of purchase  |
-| `Name`       | Varchar |       | N         | Name of place of purchase |
-| `Location`   | Varchar | FK    | Y         | Address if applicable     |
-| `Website`    | Varchar |       | Y         | Website if applicable     |
-| `Telephone`  | Varchar |       | Y         | Telephone if applicable   |
-
-### ItemVarient
-| VariableName | Type    | PK/FK | Nullable? | Description        |
-|--------------|---------|-------|-----------|--------------------|
-| `ID`         | Varchar | PK    | N         |                    |
-| `ItemID`     | Varchar | FK    | N         |                    |
-| `BrandID`    | Varchar | FK    | Y         |                    |
-| `Qty`        | Number  |       | N         | Quantity of item   |
-| `UnitID`  | Varchar | FK    | N         | Unit of quantity   |
-| `SKU`        | Varchar |       | Y         | Barcode ish things |
-| `Website` | Text | | Y | Website link if available |
-
-### Unit
-| VariableName | Type    | PK/FK | Nullable? | Description                                      |
-|--------------|---------|-------|-----------|--------------------------------------------------|
-| `ID`         | Varchar | PK    | N         |                                                  |
-| `Name`       | Varchar |       | N         |                                                  |
-| `BaseUnitID` | Varchar | FK    | Y         | Used to quote base unit, e.g. kg for g, L for ml |
-
-### PurchaseRecord
-| VariableName   | Type    | PK/FK | Nullable? | Description      |
-|----------------|---------|-------|-----------|------------------|
-| `ID`           | Varchar | PK    | N         |                  |
-| `RecieptID`    | Varchar |       | Y         |                  |
-| `ShopID`       | Varchar | PK    | Y         |                  |
-| `PurchaseTime` | Time    |       | N         |                  |
-| `VATID`        | Varchar |       | Y         |                  |
-| `FileID`       | Varchar | FK    | Y         | Photo of reciept |
-
-### PriceRecord
-| VariableName       | Type    | PK/FK | Nullable? | Description                                                       |
-|--------------------|---------|-------|-----------|-------------------------------------------------------------------|
-| `ID`               | Varchar | PK    | N         |                                                                   |
-| `ItemVarientID`    | Varchar | FK    | N         |                                                                   |
-| `BatchCode`        | Varchar |       | Y         |                                                                   |
-| `SN`               | Varchar |       | Y         |                                                                   |
-| `PurchaseID`       | Varchar | FK    | Y         |                                                                   |
-| `OriginalAmount`   | Number  |       | N         |                                                                   |
-| `OriginalCurrency` | Char(3) |       | N         |                                                                   |
-| `DiscountAmount`   | Number  |       | Y         |                                                                   |
-| `DiscountCurrency` | Char(3) |       | Y         |                                                                   |
-| `DiscountTypeID`   | Varchar | FK    | Y         | Types of discount, reduce to clear, membership, general discount… |
-| `RecordAt`         | Time    |       | N         |                                                                   |
-| `SourceID`         | Varchar | FK    | N         | Who registe the record                                            |
-| `Notes`            | Text    |       | Y         |                                                                   |
-
-### DiscountType
-
-### Address
-| VariableName     | Type        | PK/FK | Nullable? | Description |
-|------------------|------------|-------|-----------|-------------|
-| id               | SERIAL     | PK    | No        | Unique identifier for the address |
-| country_code     | CHAR(2)    |       | No        | ISO country code (e.g. GB, US, CN) |
-| building_number  | TEXT       |       | Yes       | House/building number (e.g. 221B, 10) |
-| street_name      | TEXT       |       | Yes       | Street name (e.g. Baker Street) |
-| street_line2     | TEXT       |       | Yes       | Additional address line (area, estate, etc.) |
-| unit             | TEXT       |       | Yes       | Flat/Apt/Room/Suite number |
-| floor            | TEXT       |       | Yes       | Floor number or level |
-| building_name    | TEXT       |       | Yes       | Building name (e.g. Tower A, Sherlock House) |
-| district         | TEXT       |       | Yes       | District / borough / locality |
-| city             | TEXT       |       | Yes       | City or town |
-| state_region     | TEXT       |       | Yes       | State / county / province |
-| postal_code      | TEXT       |       | Yes       | ZIP/postcode |
-| landmark         | TEXT       |       | Yes       | Nearby landmark for navigation |
-| notes            | TEXT       |       | Yes       | Additional notes or delivery info |
-| full_text        | TEXT       |       | Yes       | Original unstructured address |
-| created_at       | TIMESTAMP  |       | No        | Record creation timestamp |
-
-
 ## API
 The API can be separate to two parts: `PriceTrack` dedicated and general user and account control.  
-Please check the [API_Guide.md]() for more details on how to use them.
-
-
-
-
-
-
+Please check the [API_Guide.md](API_Guide.md) for more details on how to use them.
 
 
 # Reference
-[C4 Diagram](https://c4model.com/diagrams/system-context)

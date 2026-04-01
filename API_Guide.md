@@ -6,13 +6,11 @@ The details of each table can check [Dev_doc]()
 
 ### `PriceRecord`
 
-| Method   | Endpoint                       | Description                             | Version | Response | Request |
-|----------|--------------------------------|-----------------------------------------|---------|----------|---------|
-| `GET`    | `/PriceTracker/PriceRecord`    | Get value(s) of an existing row         |         |          |         |
-| `POST`   | `/PriceTracker/PriceRecord`    | Add a new row in `PriceRecord`          |         |          |         |
-| `PATCH`  | `/PriceTracker/PriceRecord`    | Edit an existing row in `PriceRecord`   |         |          |         |
-| `DELETE` | `/PriceTracker/PriceRecord`    | Remove an existing row in `PriceRecord` |         |          |         |
-|          |                                |                                         |         |          |         |
+| Request                                      | Header | Body or Parameter | Response | Access Right | Version | Description |
+|----------------------------------------------|--------|-------------------|----------|--------------|---------|-------------|
+| `GET /PriceTracker/PriceRecord`              |        | N/A               |          | User         |         |             |
+| `GET /PriceTracker/PriceRecord?fields=a,b,c` |        | User:   Guest:    |          | Guest        |         |             |
+|                                              |        |                   |          |              |         |             |
 
 ### `PurchaseRecord`
 
@@ -61,13 +59,13 @@ The details of each table can check [Dev_doc]()
 
 ### `Shop`
 
-| Method   | Endpoint                       | Description                             | Version | Response | Request |
-|----------|--------------------------------|-----------------------------------------|---------|----------|---------|
-| `GET`    | `/PriceTracker/Shop`           |                                         |         |          |         |
-| `POST`   | `/PriceTracker/Shop`           |                                         |         |          |         |
-| `PATCH`  | `/PriceTracker/Shop`           |                                         |         |          |         |
-| `DELETE` | `/PriceTracker/Shop`           |                                         |         |          |         |
-|          |                                |                                         |         |          |         |
+| Request                                        | Header | Body or Parameter      | Response                                  | Access Right | Version | Description                                                   |
+|------------------------------------------------|--------|------------------------|-------------------------------------------|--------------|---------|---------------------------------------------------------------|
+| `GET /PriceTracker/Shop`                       |        | N/A                    |                                           | Guest        |         | Get a list of all shops                                       |
+| `GET /PriceTracker/Shop?ID="example%20id"`     |        | `ID="UUID-Shop"`       | Fields of the shop with given ID          | Guest        |         | Get all fields of a single shop information with ShopID given |
+| `GET /PriceTracker/Shop?Name="example%20name"` |        | `Name="guest%20input"` | A list of ShopID which matches given name | Guest        |         | Find shop(s) with similar name given                          |
+|                                                |        |                        |                                           | Guest        |         | Get a list of shop match the location requirement given       |
+|                                                |        |                        |                                           |              |         |                                                               |
 
 ### `Address`
 

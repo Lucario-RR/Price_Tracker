@@ -642,5 +642,3 @@ AdminModeration
 AdminConfig
 AdminSecurity
 ```
-
-This is the cleaner dev-sheet version I’d use as the new source of truth. Next step could be turning it into an OpenAPI 3.1 spec with schemas and example payloads.

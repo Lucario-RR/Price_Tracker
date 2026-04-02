@@ -321,11 +321,11 @@ Since you mentioned it:
 ### Frontend Navication Structure
 ```
 Home
- ├── Search Results
- │     └── Item Detail
- │            ├── Price Comparison
- │            ├── Price History
- │            └── Add Price
+ ├── Search Results (1)
+ │     └── Item Detail (2)
+ │            ├── Price Comparison (3)
+ │            ├── Price History (4)
+ │            └── Add Price (5)
  │
  ├── Compare (multi-item)
  ├── Shops
@@ -341,7 +341,16 @@ Home
  │
  └── Auth (Login/Register)
 ```
+1. Search Results
+- Step 1-1: Search `Item` with `user_input`
+- Step 1-2: Search `ItemVarient` with `user_input`
+- Step 2: Jump to Item Details with `ItemID` and `ItemVarientID`(2)
 
+2. Item Details (2)
+- Step 0: Call with list of `ItemID` and `ItemVarientID`
+- Step 1: If empty, prompt not found
+- Step 2: If `ItemID` found, request details of `ItemID` and sons in `ItemVarient`
+- Step 3: If `ItemVarientID` found (from Step 0 and 2), request details of `ItemVarientID`, 
 ### 🏠 2. Home Page (Entry Point)
 
 #### 🎯 Goal:

@@ -1,0 +1,2751 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: PriceTracker API
+  version: 1.0.0-draft
+  summary: REST API for public price discovery, contributed price submissions, receipt
+    handling, and moderation.
+  description: 'First-cut OpenAPI 3.1 contract for the PriceTracker system.
+
+
+    This spec separates public read endpoints from authenticated write flows and restricted
+    admin moderation flows.
+
+    Sensitive artifacts such as receipts, VAT identifiers, internal source attribution,
+    and moderation notes are intentionally excluded from public DTOs.
+
+
+    Rust-friendly notes:
+
+    - IDs use `format: uuid` to map cleanly to `uuid::Uuid`.
+
+    - Monetary values use decimal strings to map cleanly to `rust_decimal::Decimal`.
+
+    - Timestamps use `format: date-time` for `chrono::DateTime<Utc>`.
+
+    - JSON field names are camelCase to align with `#[serde(rename_all = "camelCase")]`.
+
+    '
+x-rust-backend:
+  recommendedFrameworks:
+  - axum
+  - actix-web
+  recommendedCrates:
+  - serde
+  - utoipa
+  - validator
+  - uuid
+  - chrono
+  - rust_decimal
+  - sqlx
+  - tracing
+  notes:
+  - Prefer `rust_decimal::Decimal` over floating point for prices, discounts, and
+    unit prices.
+  - Generate or validate the contract with `utoipa` and keep examples in sync with
+    DTO tests.
+  - Keep request DTOs and public response DTOs separate from internal persistence
+    models.
+servers:
+- url: https://api.example.com/api/v1
+  description: Production
+- url: http://localhost:3000/api/v1
+  description: Local development
+tags:
+- name: Auth
+- name: Users
+- name: Catalog
+- name: Shops
+- name: Prices
+- name: Purchases
+- name: Files
+- name: Comparisons
+- name: Watchlists
+- name: Alerts
+- name: AdminModeration
+paths:
+  /auth/register:
+    post:
+      tags:
+      - Auth
+      operationId: register
+      summary: Register a new user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            examples:
+              default:
+                value:
+                  email: alex@example.com
+                  password: StrongPassword!234
+                  displayName: Alex
+      responses:
+        '201':
+          description: Account created and session issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /auth/login:
+    post:
+      tags:
+      - Auth
+      operationId: login
+      summary: Authenticate with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              default:
+                value:
+                  email: alex@example.com
+                  password: StrongPassword!234
+      responses:
+        '200':
+          description: Access token returned and refresh cookie set by the server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/refresh:
+    post:
+      tags:
+      - Auth
+      operationId: refreshSession
+      summary: Refresh an access token using the refresh cookie
+      security:
+      - refreshTokenCookie: []
+        csrfHeader: []
+      responses:
+        '200':
+          description: Access token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/logout:
+    post:
+      tags:
+      - Auth
+      operationId: logout
+      summary: Invalidate the current session
+      security:
+      - bearerAuth: []
+      - refreshTokenCookie: []
+        csrfHeader: []
+      responses:
+        '204':
+          description: Session invalidated
+  /me:
+    get:
+      tags:
+      - Users
+      operationId: getMe
+      summary: Get the current authenticated user profile
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Current profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags:
+      - Users
+      operationId: updateMe
+      summary: Update the current authenticated user profile
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+            examples:
+              default:
+                value:
+                  displayName: Alex Pricewatch
+                  defaultCurrency: GBP
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+  /categories:
+    get:
+      tags:
+      - Catalog
+      operationId: listCategories
+      summary: List categories
+      responses:
+        '200':
+          description: Category list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryListEnvelope'
+  /brands:
+    get:
+      tags:
+      - Catalog
+      operationId: listBrands
+      summary: List brands
+      parameters:
+      - $ref: '#/components/parameters/SearchQuery'
+      responses:
+        '200':
+          description: Brand list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandListEnvelope'
+  /units:
+    get:
+      tags:
+      - Catalog
+      operationId: listUnits
+      summary: List supported units
+      responses:
+        '200':
+          description: Unit list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitListEnvelope'
+  /discount-types:
+    get:
+      tags:
+      - Catalog
+      operationId: listDiscountTypes
+      summary: List supported discount types
+      responses:
+        '200':
+          description: Discount type list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscountTypeListEnvelope'
+  /items:
+    get:
+      tags:
+      - Catalog
+      operationId: listItems
+      summary: Search or browse items
+      parameters:
+      - $ref: '#/components/parameters/SearchQuery'
+      - $ref: '#/components/parameters/CategoryIdQuery'
+      - $ref: '#/components/parameters/BrandIdQuery'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: sort
+        in: query
+        schema:
+          type: string
+          enum:
+          - name
+          - relevance
+          - latestPrice
+        example: relevance
+      responses:
+        '200':
+          description: Item summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /items/{itemId}:
+    get:
+      tags:
+      - Catalog
+      operationId: getItem
+      summary: Get an item by ID
+      parameters:
+      - $ref: '#/components/parameters/ItemIdPath'
+      responses:
+        '200':
+          description: Item detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /items/{itemId}/variants:
+    get:
+      tags:
+      - Catalog
+      operationId: listItemVariants
+      summary: List variants for an item
+      parameters:
+      - $ref: '#/components/parameters/ItemIdPath'
+      responses:
+        '200':
+          description: Variant list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemVariantListEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /item-variants/{variantId}:
+    get:
+      tags:
+      - Catalog
+      operationId: getItemVariant
+      summary: Get one item variant
+      parameters:
+      - $ref: '#/components/parameters/VariantIdPath'
+      responses:
+        '200':
+          description: Variant detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemVariantEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /item-variants/{variantId}/prices:
+    get:
+      tags:
+      - Prices
+      operationId: listVariantPrices
+      summary: List latest public prices for a variant
+      parameters:
+      - $ref: '#/components/parameters/VariantIdPath'
+      - $ref: '#/components/parameters/ShopIdQuery'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Public price list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicPriceListEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /item-variants/{variantId}/price-history:
+    get:
+      tags:
+      - Prices
+      operationId: getVariantPriceHistory
+      summary: Get price history for a variant
+      parameters:
+      - $ref: '#/components/parameters/VariantIdPath'
+      - $ref: '#/components/parameters/ShopIdQuery'
+      - name: range
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - 7d
+          - 30d
+          - 90d
+          - 180d
+          - 365d
+        example: 90d
+      responses:
+        '200':
+          description: Price history series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceHistoryEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /compare:
+    get:
+      tags:
+      - Comparisons
+      operationId: compareVariants
+      summary: Compare selected variants by latest known offers
+      parameters:
+      - name: variantIds
+        in: query
+        required: true
+        style: form
+        explode: false
+        schema:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+        example:
+        - 22222222-2222-4222-8222-222222222222
+        - a2222222-2222-4222-8222-222222222222
+      responses:
+        '200':
+          description: Comparison result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComparisonEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /comparisons:
+    post:
+      tags:
+      - Comparisons
+      operationId: createComparison
+      summary: Compare selected variants using a request body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComparisonRequest'
+            examples:
+              default:
+                value:
+                  variantIds:
+                  - 22222222-2222-4222-8222-222222222222
+                  - a2222222-2222-4222-8222-222222222222
+      responses:
+        '200':
+          description: Comparison result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComparisonEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /shops:
+    get:
+      tags:
+      - Shops
+      operationId: listShops
+      summary: Search or browse shops
+      parameters:
+      - $ref: '#/components/parameters/SearchQuery'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Shop list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShopListEnvelope'
+  /shops/{shopId}:
+    get:
+      tags:
+      - Shops
+      operationId: getShop
+      summary: Get one shop
+      parameters:
+      - $ref: '#/components/parameters/ShopIdPath'
+      responses:
+        '200':
+          description: Shop detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShopEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /files/uploads:
+    post:
+      tags:
+      - Files
+      operationId: createFileUploadIntent
+      summary: Create a signed upload intent for a receipt file
+      description: 'Authenticated users can upload receipt images or PDFs through
+        a signed object-store URL.
+
+        Files remain private and unavailable for public access.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileUploadIntentRequest'
+            examples:
+              default:
+                value:
+                  filename: receipt.jpg
+                  contentType: image/jpeg
+                  size: 231231
+      responses:
+        '201':
+          description: Upload intent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadIntentEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /files/uploads/{fileId}/complete:
+    post:
+      tags:
+      - Files
+      operationId: completeFileUpload
+      summary: Finalize a signed upload after the client uploads the object
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: File metadata after upload completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileRecordEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/files/{fileId}:
+    get:
+      tags:
+      - Files
+      operationId: getOwnFile
+      summary: Get file metadata for one of the caller's files
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: File metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileRecordEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/files/{fileId}/download:
+    get:
+      tags:
+      - Files
+      operationId: getOwnFileDownload
+      summary: Get a short-lived signed download URL for one of the caller's files
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: Signed download URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileDownloadEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /purchases:
+    post:
+      tags:
+      - Purchases
+      operationId: createPurchase
+      summary: Create a purchase record owned by the current user
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseCreateRequest'
+            examples:
+              default:
+                value:
+                  shopId: 33333333-3333-4333-8333-333333333333
+                  purchaseTime: '2026-04-02T16:55:00Z'
+                  receiptFileId: 66666666-6666-4666-8666-666666666666
+      responses:
+        '201':
+          description: Purchase created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /me/purchases:
+    get:
+      tags:
+      - Purchases
+      operationId: listOwnPurchases
+      summary: List the caller's purchases
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Purchase list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/purchases/{purchaseId}:
+    get:
+      tags:
+      - Purchases
+      operationId: getOwnPurchase
+      summary: Get one purchase owned by the caller
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PurchaseIdPath'
+      responses:
+        '200':
+          description: Purchase detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - Purchases
+      operationId: updateOwnPurchase
+      summary: Update one purchase owned by the caller
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PurchaseIdPath'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseUpdateRequest'
+            examples:
+              default:
+                value:
+                  purchaseTime: '2026-04-02T17:05:00Z'
+      responses:
+        '200':
+          description: Updated purchase
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+    delete:
+      tags:
+      - Purchases
+      operationId: deleteOwnPurchase
+      summary: Soft delete one purchase owned by the caller
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PurchaseIdPath'
+      responses:
+        '204':
+          description: Purchase deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /prices:
+    post:
+      tags:
+      - Prices
+      operationId: createPriceSubmission
+      summary: Submit a price record owned by the current user
+      description: 'The server derives submission ownership and internal source attribution
+        from the authenticated session.
+
+        Client applications must not send internal source identifiers.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceCreateRequest'
+            examples:
+              default:
+                value:
+                  itemVariantId: 22222222-2222-4222-8222-222222222222
+                  purchaseId: 44444444-4444-4444-8444-444444444444
+                  originalAmount: '1.99'
+                  originalCurrency: GBP
+                  discountAmount: '0.30'
+                  discountCurrency: GBP
+                  discountTypeId: d1111111-1111-4111-8111-111111111111
+                  recordedAt: '2026-04-02T16:55:00Z'
+                  notes: yellow sticker
+      responses:
+        '201':
+          description: Price submission created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceSubmissionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /me/prices:
+    get:
+      tags:
+      - Prices
+      operationId: listOwnPriceSubmissions
+      summary: List the caller's price submissions
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Price submission list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceSubmissionListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/prices/{priceId}:
+    get:
+      tags:
+      - Prices
+      operationId: getOwnPriceSubmission
+      summary: Get one price submission owned by the caller
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PriceIdPath'
+      responses:
+        '200':
+          description: Price submission detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceSubmissionEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags:
+      - Prices
+      operationId: updateOwnPriceSubmission
+      summary: Update one price submission owned by the caller
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PriceIdPath'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceUpdateRequest'
+            examples:
+              default:
+                value:
+                  notes: yellow sticker - markdown corrected
+      responses:
+        '200':
+          description: Updated price submission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceSubmissionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+    delete:
+      tags:
+      - Prices
+      operationId: deleteOwnPriceSubmission
+      summary: Soft delete one price submission owned by the caller
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PriceIdPath'
+      responses:
+        '204':
+          description: Price submission deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/watchlist:
+    get:
+      tags:
+      - Watchlists
+      operationId: listWatchlist
+      summary: List the caller's watchlist entries
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Watchlist entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/watchlist/items:
+    post:
+      tags:
+      - Watchlists
+      operationId: createWatchlistItem
+      summary: Add an item variant to the caller's watchlist
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchlistCreateRequest'
+            examples:
+              default:
+                value:
+                  itemVariantId: 22222222-2222-4222-8222-222222222222
+      responses:
+        '201':
+          description: Watchlist entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistEntryEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /me/watchlist/items/{watchId}:
+    delete:
+      tags:
+      - Watchlists
+      operationId: deleteWatchlistItem
+      summary: Remove a watchlist entry
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WatchIdPath'
+      responses:
+        '204':
+          description: Watchlist entry deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/alerts:
+    get:
+      tags:
+      - Alerts
+      operationId: listAlerts
+      summary: List the caller's alerts
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - Alerts
+      operationId: createAlert
+      summary: Create a price alert
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertCreateRequest'
+            examples:
+              default:
+                value:
+                  itemVariantId: 22222222-2222-4222-8222-222222222222
+                  targetFinalAmount: '1.50'
+                  currency: GBP
+                  isEnabled: true
+      responses:
+        '201':
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/alerts/{alertId}:
+    patch:
+      tags:
+      - Alerts
+      operationId: updateAlert
+      summary: Update one of the caller's alerts
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/AlertIdPath'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertUpdateRequest'
+            examples:
+              default:
+                value:
+                  targetFinalAmount: '1.45'
+                  isEnabled: false
+      responses:
+        '200':
+          description: Alert updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+    delete:
+      tags:
+      - Alerts
+      operationId: deleteAlert
+      summary: Delete one of the caller's alerts
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/AlertIdPath'
+      responses:
+        '204':
+          description: Alert deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/moderation/prices:
+    get:
+      tags:
+      - AdminModeration
+      operationId: listModerationPrices
+      summary: List submitted or flagged price submissions for moderation
+      description: 'Required scope: `admin:moderate`.
+
+        This endpoint is restricted to privileged staff and must be audited.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Moderation queue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationPriceQueueEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /admin/moderation/prices/{priceId}/verify:
+    post:
+      tags:
+      - AdminModeration
+      operationId: verifyModerationPrice
+      summary: Verify and publish a price submission
+      description: 'Required scope: `admin:moderate`.
+
+        This action should generate an immutable audit log entry.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PriceIdPath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationVerifyRequest'
+            examples:
+              default:
+                value:
+                  note: verified against uploaded receipt
+      responses:
+        '200':
+          description: Verified price submission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceSubmissionEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/moderation/prices/{priceId}/reject:
+    post:
+      tags:
+      - AdminModeration
+      operationId: rejectModerationPrice
+      summary: Reject a price submission
+      description: 'Required scope: `admin:moderate`.
+
+        This action should generate an immutable audit log entry.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PriceIdPath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationRejectRequest'
+            examples:
+              default:
+                value:
+                  reasonCode: PRICE_OUT_OF_RANGE
+                  note: receipt amount did not match submission
+      responses:
+        '200':
+          description: Rejected price submission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceSubmissionEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    refreshTokenCookie:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+  parameters:
+    SearchQuery:
+      name: query
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+      example: milk
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+      example: cur_eyJvZmZzZXQiOjIwfQ
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      example: 20
+    CategoryIdQuery:
+      name: categoryId
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+      example: c1111111-1111-4111-8111-111111111111
+    BrandIdQuery:
+      name: brandId
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+      example: b1111111-1111-4111-8111-111111111111
+    ShopIdQuery:
+      name: shopId
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+      example: 33333333-3333-4333-8333-333333333333
+    ItemIdPath:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 11111111-1111-4111-8111-111111111111
+    VariantIdPath:
+      name: variantId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 22222222-2222-4222-8222-222222222222
+    ShopIdPath:
+      name: shopId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 33333333-3333-4333-8333-333333333333
+    PurchaseIdPath:
+      name: purchaseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 44444444-4444-4444-8444-444444444444
+    PriceIdPath:
+      name: priceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 55555555-5555-4555-8555-555555555555
+    FileIdPath:
+      name: fileId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 66666666-6666-4666-8666-666666666666
+    WatchIdPath:
+      name: watchId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 77777777-7777-4777-8777-777777777777
+    AlertIdPath:
+      name: alertId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 88888888-8888-4888-8888-888888888888
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 200
+      example: idem_20260402_001
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      schema:
+        type: string
+      example: W/"rev-3"
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Submitted price is outside allowed bounds.
+                  details:
+                    field: originalAmount
+                  requestId: req_01HZZZZZZZZZZ
+    Unauthorized:
+      description: Authentication is required or invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              value:
+                error:
+                  code: UNAUTHORIZED
+                  message: Authentication is required.
+                  requestId: req_01HZZZZZZZZZZ
+    Forbidden:
+      description: The caller lacks permission for this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              value:
+                error:
+                  code: FORBIDDEN
+                  message: You do not have permission to perform this action.
+                  requestId: req_01HZZZZZZZZZZ
+    NotFound:
+      description: The requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              value:
+                error:
+                  code: NOT_FOUND
+                  message: Resource not found.
+                  requestId: req_01HZZZZZZZZZZ
+    Conflict:
+      description: The request conflicts with existing state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              value:
+                error:
+                  code: CONFLICT
+                  message: A similar submission already exists.
+                  requestId: req_01HZZZZZZZZZZ
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              value:
+                error:
+                  code: RATE_LIMITED
+                  message: Too many requests. Try again later.
+                  requestId: req_01HZZZZZZZZZZ
+    PreconditionFailed:
+      description: The resource changed and the precondition no longer matches
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              value:
+                error:
+                  code: PRECONDITION_FAILED
+                  message: The resource has been modified. Refresh and retry.
+                  requestId: req_01HZZZZZZZZZZ
+  schemas:
+    Identifier:
+      type: string
+      format: uuid
+      example: 11111111-1111-4111-8111-111111111111
+    CurrencyCode:
+      type: string
+      pattern: ^[A-Z]{3}$
+      example: GBP
+    DecimalString:
+      type: string
+      pattern: ^-?\d+(\.\d{1,4})?$
+      example: '1.99'
+    ResponseMeta:
+      type: object
+      additionalProperties: false
+      required:
+      - requestId
+      properties:
+        requestId:
+          type: string
+          example: req_01HZZZZZZZZZZ
+        nextCursor:
+          type:
+          - string
+          - 'null'
+          example: cur_eyJvZmZzZXQiOjIwfQ
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - message
+      - requestId
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: Submitted price is outside allowed bounds.
+        details:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+        requestId:
+          type: string
+          example: req_01HZZZZZZZZZZ
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - password
+      - displayName
+      properties:
+        email:
+          type: string
+          format: email
+          example: alex@example.com
+        password:
+          type: string
+          minLength: 12
+          maxLength: 128
+          example: StrongPassword!234
+        displayName:
+          type: string
+          minLength: 2
+          maxLength: 80
+          example: Alex
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: alex@example.com
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          example: StrongPassword!234
+    AuthSession:
+      type: object
+      additionalProperties: false
+      required:
+      - accessToken
+      - tokenType
+      - expiresInSeconds
+      - user
+      properties:
+        accessToken:
+          type: string
+          example: eyJhbGciOi...
+        tokenType:
+          type: string
+          enum:
+          - Bearer
+          example: Bearer
+        expiresInSeconds:
+          type: integer
+          minimum: 1
+          example: 900
+        user:
+          $ref: '#/components/schemas/UserProfile'
+    AuthSessionEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/AuthSession'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    UserProfile:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - email
+      - displayName
+      - roles
+      - scopes
+      - defaultCurrency
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        email:
+          type: string
+          format: email
+          example: alex@example.com
+        displayName:
+          type: string
+          example: Alex Pricewatch
+        roles:
+          type: array
+          items:
+            type: string
+            enum:
+            - user
+            - admin
+          example:
+          - user
+        scopes:
+          type: array
+          items:
+            type: string
+          example:
+          - catalog:read
+          - price:write_own
+          - purchase:write_own
+        defaultCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:00:00Z'
+    UserProfileEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/UserProfile'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ProfileUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+          minLength: 2
+          maxLength: 80
+          example: Alex Pricewatch
+        defaultCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+    Category:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Dairy
+        parentId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          example: null
+    CategoryListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Category'
+          example:
+          - id: c1111111-1111-4111-8111-111111111111
+            name: Dairy
+            parentId: null
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    Brand:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Tesco
+    BrandListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Brand'
+          example:
+          - id: b1111111-1111-4111-8111-111111111111
+            name: Tesco
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    Unit:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - symbol
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Litre
+        symbol:
+          type: string
+          example: L
+    UnitListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Unit'
+          example:
+          - id: u1111111-1111-4111-8111-111111111111
+            name: Litre
+            symbol: L
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    DiscountType:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Membership discount
+        description:
+          type:
+          - string
+          - 'null'
+          example: Applies when a loyalty membership was used.
+    DiscountTypeListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscountType'
+          example:
+          - id: d1111111-1111-4111-8111-111111111111
+            name: Membership discount
+            description: Applies when a loyalty membership was used.
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    Money:
+      type: object
+      additionalProperties: false
+      required:
+      - amount
+      - currency
+      properties:
+        amount:
+          $ref: '#/components/schemas/DecimalString'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+    BrandRef:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Tesco
+    UnitRef:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - symbol
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Litre
+        symbol:
+          type: string
+          example: L
+    ShopSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Tesco Extra
+        displayAddress:
+          type:
+          - string
+          - 'null'
+          example: 12 High Street, London
+    ShopDetail:
+      allOf:
+      - $ref: '#/components/schemas/ShopSummary'
+      - type: object
+        properties:
+          isVerified:
+            type: boolean
+            example: true
+      unevaluatedProperties: false
+    ShopEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/ShopDetail'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ShopListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShopSummary'
+          example:
+          - id: 33333333-3333-4333-8333-333333333333
+            name: Tesco Extra
+            displayAddress: 12 High Street, London
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ItemVariantSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - itemId
+      - brand
+      - quantity
+      - unit
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        itemId:
+          $ref: '#/components/schemas/Identifier'
+        brand:
+          $ref: '#/components/schemas/BrandRef'
+        quantity:
+          $ref: '#/components/schemas/DecimalString'
+        unit:
+          $ref: '#/components/schemas/UnitRef'
+        sku:
+          type:
+          - string
+          - 'null'
+          maxLength: 64
+          example: '5012345678901'
+        website:
+          type:
+          - string
+          - 'null'
+          format: uri
+          example: https://example.com/items/milk-1l
+    ItemVariantDetail:
+      allOf:
+      - $ref: '#/components/schemas/ItemVariantSummary'
+      - type: object
+        properties:
+          latestKnownPrice:
+            type:
+            - object
+            - 'null'
+            additionalProperties: false
+            required:
+            - amount
+            - currency
+            properties:
+              amount:
+                $ref: '#/components/schemas/DecimalString'
+              currency:
+                $ref: '#/components/schemas/CurrencyCode'
+            example:
+              amount: '1.60'
+              currency: GBP
+      unevaluatedProperties: false
+    VariantSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - count
+      properties:
+        count:
+          type: integer
+          minimum: 0
+          example: 3
+        lowestKnownPrice:
+          type:
+          - object
+          - 'null'
+          additionalProperties: false
+          required:
+          - amount
+          - currency
+          properties:
+            amount:
+              $ref: '#/components/schemas/DecimalString'
+            currency:
+              $ref: '#/components/schemas/CurrencyCode'
+          example:
+            amount: '1.60'
+            currency: GBP
+    ItemSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - categoryId
+      - name
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        categoryId:
+          $ref: '#/components/schemas/Identifier'
+        name:
+          type: string
+          example: Milk
+        specification:
+          type:
+          - string
+          - 'null'
+          example: Semi-skimmed
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T15:00:00Z'
+        variantSummary:
+          anyOf:
+          - $ref: '#/components/schemas/VariantSummary'
+          - type: 'null'
+    ItemDetail:
+      allOf:
+      - $ref: '#/components/schemas/ItemSummary'
+      - type: object
+        properties:
+          variants:
+            type: array
+            items:
+              $ref: '#/components/schemas/ItemVariantSummary'
+      unevaluatedProperties: false
+    ItemEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/ItemDetail'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ItemListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemSummary'
+          example:
+          - id: 11111111-1111-4111-8111-111111111111
+            categoryId: c1111111-1111-4111-8111-111111111111
+            name: Milk
+            specification: Semi-skimmed
+            createdAt: '2026-04-02T15:00:00Z'
+            variantSummary:
+              count: 3
+              lowestKnownPrice:
+                amount: '1.60'
+                currency: GBP
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ItemVariantEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/ItemVariantDetail'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ItemVariantListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemVariantSummary'
+          example:
+          - id: 22222222-2222-4222-8222-222222222222
+            itemId: 11111111-1111-4111-8111-111111111111
+            brand:
+              id: b1111111-1111-4111-8111-111111111111
+              name: Tesco
+            quantity: '1.0'
+            unit:
+              id: u1111111-1111-4111-8111-111111111111
+              name: Litre
+              symbol: L
+            sku: '5012345678901'
+            website: https://example.com/items/milk-1l
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PriceBreakdown:
+      type: object
+      additionalProperties: false
+      required:
+      - originalAmount
+      - currency
+      - finalAmount
+      - unitPrice
+      - unitLabel
+      properties:
+        originalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        discountAmount:
+          type:
+          - string
+          - 'null'
+          pattern: ^-?\d+(\.\d{1,4})?$
+          example: '0.30'
+        finalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        unitPrice:
+          $ref: '#/components/schemas/DecimalString'
+        unitLabel:
+          type: string
+          example: GBP/L
+    PublicPrice:
+      type: object
+      additionalProperties: false
+      required:
+      - itemVariantId
+      - shop
+      - price
+      - recordedAt
+      - verification
+      properties:
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+        shop:
+          $ref: '#/components/schemas/ShopSummary'
+        price:
+          $ref: '#/components/schemas/PriceBreakdown'
+        recordedAt:
+          type: string
+          format: date-time
+          example: '2026-04-01T18:20:00Z'
+        verification:
+          type: string
+          enum:
+          - community
+          - moderator
+          - trusted_source
+          example: community
+    PublicPriceListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicPrice'
+          example:
+          - itemVariantId: 22222222-2222-4222-8222-222222222222
+            shop:
+              id: 33333333-3333-4333-8333-333333333333
+              name: Tesco Extra
+              displayAddress: 12 High Street, London
+            price:
+              originalAmount: '1.80'
+              currency: GBP
+              discountAmount: '0.20'
+              finalAmount: '1.60'
+              unitPrice: '1.60'
+              unitLabel: GBP/L
+            recordedAt: '2026-04-01T18:20:00Z'
+            verification: community
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PriceHistoryPoint:
+      type: object
+      additionalProperties: false
+      required:
+      - recordedAt
+      - finalAmount
+      - unitPrice
+      properties:
+        recordedAt:
+          type: string
+          format: date-time
+          example: '2026-02-05T00:00:00Z'
+        finalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        unitPrice:
+          $ref: '#/components/schemas/DecimalString'
+    PriceHistory:
+      type: object
+      additionalProperties: false
+      required:
+      - itemVariantId
+      - currency
+      - unitLabel
+      - points
+      properties:
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        unitLabel:
+          type: string
+          example: GBP/L
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/PriceHistoryPoint'
+          example:
+          - recordedAt: '2026-01-05T00:00:00Z'
+            finalAmount: '1.85'
+            unitPrice: '1.85'
+          - recordedAt: '2026-02-05T00:00:00Z'
+            finalAmount: '1.95'
+            unitPrice: '1.95'
+    PriceHistoryEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/PriceHistory'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ComparisonRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - variantIds
+      properties:
+        variantIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+          example:
+          - 22222222-2222-4222-8222-222222222222
+          - a2222222-2222-4222-8222-222222222222
+    ComparisonResult:
+      type: object
+      additionalProperties: false
+      required:
+      - itemVariant
+      - offers
+      properties:
+        itemVariant:
+          $ref: '#/components/schemas/ItemVariantSummary'
+        bestOffer:
+          anyOf:
+          - $ref: '#/components/schemas/PublicPrice'
+          - type: 'null'
+        offers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicPrice'
+    Comparison:
+      type: object
+      additionalProperties: false
+      required:
+      - comparedAt
+      - results
+      properties:
+        comparedAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T17:10:00Z'
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComparisonResult'
+    ComparisonEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/Comparison'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    FileUploadIntentRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - filename
+      - contentType
+      - size
+      properties:
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: receipt.jpg
+        contentType:
+          type: string
+          enum:
+          - image/jpeg
+          - image/png
+          - application/pdf
+          example: image/jpeg
+        size:
+          type: integer
+          minimum: 1
+          maximum: 10485760
+          example: 231231
+    FileUploadIntent:
+      type: object
+      additionalProperties: false
+      required:
+      - fileId
+      - uploadUrl
+      - expiresAt
+      properties:
+        fileId:
+          $ref: '#/components/schemas/Identifier'
+        uploadUrl:
+          type: string
+          format: uri
+          example: https://uploads.example.com/signed/abc
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T17:30:00Z'
+    FileUploadIntentEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/FileUploadIntent'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    FileRecord:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - filename
+      - contentType
+      - size
+      - status
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        filename:
+          type: string
+          example: receipt.jpg
+        contentType:
+          type: string
+          example: image/jpeg
+        size:
+          type: integer
+          example: 231231
+        status:
+          type: string
+          enum:
+          - pending_upload
+          - uploaded
+          - scan_pending
+          - ready
+          - rejected
+          - deleted
+          example: ready
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:50:00Z'
+    FileRecordEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/FileRecord'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    FileDownload:
+      type: object
+      additionalProperties: false
+      required:
+      - url
+      - expiresAt
+      properties:
+        url:
+          type: string
+          format: uri
+          example: https://downloads.example.com/signed/abc
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T17:40:00Z'
+    FileDownloadEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/FileDownload'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PurchaseCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - shopId
+      - purchaseTime
+      - receiptFileId
+      properties:
+        shopId:
+          $ref: '#/components/schemas/Identifier'
+        purchaseTime:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:55:00Z'
+        receiptFileId:
+          $ref: '#/components/schemas/Identifier'
+    PurchaseUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        purchaseTime:
+          type: string
+          format: date-time
+          example: '2026-04-02T17:05:00Z'
+        receiptFileId:
+          $ref: '#/components/schemas/Identifier'
+    Purchase:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - shopId
+      - purchaseTime
+      - receiptFileId
+      - status
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        shopId:
+          $ref: '#/components/schemas/Identifier'
+        purchaseTime:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:55:00Z'
+        receiptFileId:
+          $ref: '#/components/schemas/Identifier'
+        status:
+          type: string
+          enum:
+          - active
+          - deleted
+          example: active
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:56:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:56:00Z'
+    PurchaseEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/Purchase'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PurchaseListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Purchase'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PriceCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - itemVariantId
+      - purchaseId
+      - originalAmount
+      - originalCurrency
+      - recordedAt
+      properties:
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+        purchaseId:
+          $ref: '#/components/schemas/Identifier'
+        originalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        originalCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        discountAmount:
+          type:
+          - string
+          - 'null'
+          pattern: ^-?\d+(\.\d{1,4})?$
+          example: '0.30'
+        discountCurrency:
+          type:
+          - string
+          - 'null'
+          pattern: ^[A-Z]{3}$
+          example: GBP
+        discountTypeId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          example: d1111111-1111-4111-8111-111111111111
+        recordedAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:55:00Z'
+        notes:
+          type:
+          - string
+          - 'null'
+          maxLength: 400
+          example: yellow sticker
+    PriceUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        originalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        originalCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        discountAmount:
+          type:
+          - string
+          - 'null'
+          pattern: ^-?\d+(\.\d{1,4})?$
+        discountCurrency:
+          type:
+          - string
+          - 'null'
+          pattern: ^[A-Z]{3}$
+        discountTypeId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        recordedAt:
+          type: string
+          format: date-time
+        notes:
+          type:
+          - string
+          - 'null'
+          maxLength: 400
+          example: yellow sticker - markdown corrected
+    PriceSubmission:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - itemVariantId
+      - purchaseId
+      - originalAmount
+      - originalCurrency
+      - finalAmount
+      - submissionStatus
+      - visibility
+      - published
+      - recordedAt
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+        purchaseId:
+          $ref: '#/components/schemas/Identifier'
+        originalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        originalCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        discountAmount:
+          type:
+          - string
+          - 'null'
+          pattern: ^-?\d+(\.\d{1,4})?$
+          example: '0.30'
+        discountCurrency:
+          type:
+          - string
+          - 'null'
+          pattern: ^[A-Z]{3}$
+          example: GBP
+        discountTypeId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          example: d1111111-1111-4111-8111-111111111111
+        finalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        submissionStatus:
+          type: string
+          enum:
+          - draft
+          - submitted
+          - flagged
+          - verified
+          - rejected
+          example: submitted
+        visibility:
+          type: string
+          enum:
+          - private
+          - public
+          example: private
+        published:
+          type: boolean
+          example: false
+        recordedAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:55:00Z'
+        notes:
+          type:
+          - string
+          - 'null'
+          example: yellow sticker
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:56:00Z'
+    PriceSubmissionEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/PriceSubmission'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PriceSubmissionListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PriceSubmission'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    WatchlistCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - itemVariantId
+      properties:
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+    WatchlistEntry:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - itemVariantId
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T17:00:00Z'
+    WatchlistEntryEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/WatchlistEntry'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    WatchlistEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchlistEntry'
+          example:
+          - id: 77777777-7777-4777-8777-777777777777
+            itemVariantId: 22222222-2222-4222-8222-222222222222
+            createdAt: '2026-04-02T17:00:00Z'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AlertCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - itemVariantId
+      - targetFinalAmount
+      - currency
+      - isEnabled
+      properties:
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+        targetFinalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        isEnabled:
+          type: boolean
+          example: true
+    AlertUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        targetFinalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        isEnabled:
+          type: boolean
+          example: false
+    Alert:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - itemVariantId
+      - targetFinalAmount
+      - currency
+      - isEnabled
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        itemVariantId:
+          $ref: '#/components/schemas/Identifier'
+        targetFinalAmount:
+          $ref: '#/components/schemas/DecimalString'
+        currency:
+          $ref: '#/components/schemas/CurrencyCode'
+        isEnabled:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T17:02:00Z'
+    AlertEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/Alert'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AlertListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+          example:
+          - id: 88888888-8888-4888-8888-888888888888
+            itemVariantId: 22222222-2222-4222-8222-222222222222
+            targetFinalAmount: '1.50'
+            currency: GBP
+            isEnabled: true
+            createdAt: '2026-04-02T17:02:00Z'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ModerationVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note:
+          type:
+          - string
+          - 'null'
+          maxLength: 400
+          example: verified against uploaded receipt
+    ModerationRejectRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - reasonCode
+      properties:
+        reasonCode:
+          type: string
+          example: PRICE_OUT_OF_RANGE
+        note:
+          type:
+          - string
+          - 'null'
+          maxLength: 400
+          example: receipt amount did not match submission
+    ModerationPriceQueueItem:
+      allOf:
+      - $ref: '#/components/schemas/PriceSubmission'
+      - type: object
+        required:
+        - submittedByUserId
+        properties:
+          submittedByUserId:
+            $ref: '#/components/schemas/Identifier'
+          flags:
+            type: array
+            items:
+              type: string
+            example:
+            - amount_outlier
+      unevaluatedProperties: false
+    ModerationPriceQueueEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModerationPriceQueueItem'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'

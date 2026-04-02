@@ -1,5 +1,3 @@
-Below is a refreshed API dev sheet that follows the newer product behavior from the recent generated content, not the older attachment layout. I’m keeping the uploaded files only as reference for the domain boundaries and schema families: guest search/browse/compare, registered contribution with receipt upload, admin moderation/configuration, and the core entities around items, variants, prices, purchases, shops, units, addresses, and files.   
-
 # PriceTracker API Dev Sheet
 
 **Version:** v1 draft

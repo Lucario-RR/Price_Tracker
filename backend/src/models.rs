@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -9,6 +8,15 @@ use uuid::Uuid;
 #[serde(rename_all = "camelCase")]
 pub struct ResponseMeta {
     pub request_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthStatus {
+    pub status: String,
+    pub service: String,
+    pub utc_time: DateTime<Utc>,
+    pub applied_migrations: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -101,14 +109,14 @@ pub struct ItemSummary {
     pub variant_summary: Option<VariantSummary>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BrandRef {
     pub id: Uuid,
     pub name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UnitRef {
     pub id: Uuid,
@@ -159,7 +167,7 @@ pub struct ItemDetail {
     pub variants: Vec<ItemVariantSummary>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PriceBreakdown {
     #[serde(with = "rust_decimal::serde::str")]
@@ -316,6 +324,7 @@ pub struct PriceSubmission {
     pub created_at: DateTime<Utc>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PriceCreateRequest {
@@ -332,6 +341,7 @@ pub struct PriceCreateRequest {
     pub notes: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PriceUpdateRequest {
@@ -492,6 +502,7 @@ pub struct PhoneNumberCreateRequest {
     pub phone_number: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationCodeRequest {
@@ -553,14 +564,9 @@ pub struct MfaChallenge {
     pub available_methods: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerateActionRequest {
     pub reason: Option<String>,
-}
-
-pub fn parse_product_codes(value: Option<Value>) -> Vec<ProductCode> {
-    value
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default()
 }

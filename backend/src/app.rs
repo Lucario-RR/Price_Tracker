@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{header, HeaderMap, Method, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     routing::{delete, get, patch, post},
     Json, Router,
 };
@@ -16,6 +16,92 @@ use crate::{error::AppError, models::*, state::AppState};
 
 const DEMO_PASSWORD: &str = "StrongPassword!234";
 
+fn normalized_key(value: &str) -> String {
+    value.trim().to_lowercase().replace(' ', "-")
+}
+
+fn notice_title(kind: &str) -> String {
+    kind.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn file_extension(filename: &str) -> Option<String> {
+    filename.rsplit_once('.').map(|(_, ext)| ext.to_lowercase())
+}
+
+async fn ensure_user_source(db: &sqlx::PgPool, account_id: Uuid) -> Result<Uuid, AppError> {
+    if let Some(existing) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM data_source WHERE account_id = $1 ORDER BY created_at ASC LIMIT 1",
+    )
+    .bind(account_id)
+    .fetch_optional(db)
+    .await?
+    {
+        return Ok(existing);
+    }
+
+    let source_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO data_source (id, source_type, account_id, source_name, trust_score, is_verified, created_at)
+        VALUES ($1, 'USER_SUBMISSION', $2, 'User submission', 50.00, FALSE, NOW())
+        "#,
+    )
+    .bind(source_id)
+    .bind(account_id)
+    .execute(db)
+    .await?;
+
+    Ok(source_id)
+}
+
+async fn current_notice_id(
+    db: &sqlx::PgPool,
+    notice_kind: &str,
+    version: Option<&str>,
+) -> Result<Option<Uuid>, AppError> {
+    let row = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT id
+        FROM privacy_notice_version
+        WHERE notice_kind = $1
+          AND ($2::text IS NULL OR version_label = $2)
+          AND retired_at IS NULL
+        ORDER BY published_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(notice_kind)
+    .bind(version)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row)
+}
+
+async fn fetch_applied_v2_migrations(db: &sqlx::PgPool) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT filename
+        FROM _app_sql_migrations
+        WHERE filename LIKE '%\_v2.sql' ESCAPE '\'
+        ORDER BY filename
+        "#,
+    )
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListItemsQuery {
@@ -30,7 +116,7 @@ struct CompareQuery {
 
 pub fn build_router(state: AppState, cors_origin: &str) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(cors_origin.parse().expect("invalid cors origin"))
+        .allow_origin(HeaderValue::from_str(cors_origin).expect("invalid cors origin"))
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers([
             header::CONTENT_TYPE,
@@ -39,6 +125,8 @@ pub fn build_router(state: AppState, cors_origin: &str) -> Router {
         ]);
 
     Router::new()
+        .route("/health", get(health))
+        .route("/api/v1/health", get(health))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/refresh", post(refresh_session))
@@ -190,6 +278,17 @@ pub fn build_router(state: AppState, cors_origin: &str) -> Router {
         .layer(cors)
 }
 
+async fn health(State(state): State<AppState>) -> Result<Json<Envelope<HealthStatus>>, AppError> {
+    let applied_migrations = fetch_applied_v2_migrations(&state.db).await?;
+
+    Ok(Json(envelope(HealthStatus {
+        status: "ok".to_string(),
+        service: "pricetracker-backend".to_string(),
+        utc_time: Utc::now(),
+        applied_migrations,
+    })))
+}
+
 async fn current_account_id(db: &sqlx::PgPool, headers: &HeaderMap) -> Result<Uuid, AppError> {
     if let Some(value) = headers.get("x-account-id") {
         let text = value
@@ -222,7 +321,7 @@ async fn build_user_profile(db: &sqlx::PgPool, account_id: Uuid) -> Result<UserP
                 LIMIT 1
             ) AS primary_email,
             (
-                SELECT phone_number
+                SELECT e164_phone_number
                 FROM account_phone
                 WHERE account_id = a.id AND deleted_at IS NULL
                 ORDER BY is_primary_for_account DESC, created_at ASC
@@ -289,21 +388,29 @@ async fn register(
 
     let account_id = Uuid::new_v4();
     let mut tx = state.db.begin().await?;
-    sqlx::query("INSERT INTO account (id, public_handle) VALUES ($1, $2)")
+    sqlx::query(
+        "INSERT INTO account (id, public_handle, account_status, created_at, updated_at, deleted_at, last_active_at) VALUES ($1, $2, 'active', NOW(), NOW(), NULL, NOW())",
+    )
         .bind(account_id)
-        .bind(payload.display_name.to_lowercase().replace(' ', "-"))
+        .bind(normalized_key(&payload.display_name))
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO account_profile (account_id, display_name, preferred_currency_code) VALUES ($1, $2, 'GBP')",
+        "INSERT INTO account_profile (account_id, display_name, locale, timezone_name, preferred_currency_code, profile_bio, created_at, updated_at) VALUES ($1, $2, 'en-GB', 'Europe/London', 'GBP', NULL, NOW(), NOW())",
     )
     .bind(account_id)
     .bind(&payload.display_name)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO account_email (account_id, email, normalized_email, verified_at) VALUES ($1, $2, $3, NOW())",
+        r#"
+        INSERT INTO account_email (
+            id, account_id, email, normalized_email, email_role, is_login_enabled,
+            is_primary_for_account, verified_at, verification_method, created_at, updated_at, deleted_at
+        ) VALUES ($1, $2, $3, $4, 'PRIMARY', TRUE, TRUE, NOW(), 'app', NOW(), NOW(), NULL)
+        "#,
     )
+    .bind(Uuid::new_v4())
     .bind(account_id)
     .bind(&payload.email)
     .bind(payload.email.to_lowercase())
@@ -311,20 +418,57 @@ async fn register(
     .await?;
     if let Some(phone) = payload.primary_phone {
         sqlx::query(
-            "INSERT INTO account_phone (account_id, phone_number, is_primary_for_account, verified_at) VALUES ($1, $2, TRUE, NOW())",
+            r#"
+            INSERT INTO account_phone (
+                id, account_id, e164_phone_number, extension, phone_role, is_sms_enabled, is_voice_enabled,
+                is_primary_for_account, verified_at, verification_method, created_at, updated_at, deleted_at
+            ) VALUES ($1, $2, $3, NULL, 'PRIMARY', TRUE, TRUE, TRUE, NOW(), 'app', NOW(), NOW(), NULL)
+            "#,
         )
+        .bind(Uuid::new_v4())
         .bind(account_id)
         .bind(phone)
         .execute(&mut *tx)
         .await?;
     }
+    let source_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO data_source (id, source_type, account_id, source_name, trust_score, is_verified, created_at)
+        VALUES ($1, 'USER_SUBMISSION', $2, $3, 50.00, FALSE, NOW())
+        "#,
+    )
+    .bind(source_id)
+    .bind(account_id)
+    .bind(&payload.display_name)
+    .execute(&mut *tx)
+    .await?;
     for doc in payload.accepted_legal_documents {
-        sqlx::query(
-            "INSERT INTO consent_record (account_id, document_key, version) VALUES ($1, $2, $3)",
+        let notice_id = current_notice_id(&state.db, &doc.document_key, Some(&doc.version)).await?;
+        let purpose_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM processing_purpose WHERE code = $1 LIMIT 1",
         )
+        .bind(&doc.document_key)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Unsupported legal document key: {}",
+                doc.document_key
+            ))
+        })?;
+        sqlx::query(
+            r#"
+            INSERT INTO consent_record (
+                id, account_id, anonymous_subject_token_hash, processing_purpose_id, notice_version_id,
+                consent_status, captured_via, evidence_json, captured_at, withdrawn_at
+            ) VALUES ($1, $2, NULL, $3, $4, 'accepted', 'registration', '{"source":"register"}'::jsonb, NOW(), NULL)
+            "#,
+        )
+        .bind(Uuid::new_v4())
         .bind(account_id)
-        .bind(doc.document_key)
-        .bind(doc.version)
+        .bind(purpose_id)
+        .bind(notice_id)
         .execute(&mut *tx)
         .await?;
     }
@@ -407,8 +551,8 @@ async fn update_me(
     let account_id = current_account_id(&state.db, &headers).await?;
     sqlx::query(
         r#"
-        INSERT INTO account_profile (account_id, display_name, preferred_currency_code)
-        VALUES ($1, $2, COALESCE($3, 'GBP'))
+        INSERT INTO account_profile (account_id, display_name, locale, timezone_name, preferred_currency_code, profile_bio, created_at, updated_at)
+        VALUES ($1, $2, 'en-GB', 'Europe/London', COALESCE($3, 'GBP'), NULL, NOW(), NOW())
         ON CONFLICT (account_id) DO UPDATE
         SET display_name = COALESCE($2, account_profile.display_name),
             preferred_currency_code = COALESCE($3, account_profile.preferred_currency_code),
@@ -429,19 +573,22 @@ async fn update_me(
 async fn list_categories(
     State(state): State<AppState>,
 ) -> Result<Json<Envelope<Vec<Category>>>, AppError> {
-    let rows =
-        sqlx::query_as::<_, Category>("SELECT id, name, parent_id FROM category ORDER BY name")
-            .fetch_all(&state.db)
-            .await?;
+    let rows = sqlx::query_as::<_, Category>(
+        "SELECT id, name, parent_category_id AS parent_id FROM category WHERE is_active = TRUE ORDER BY name",
+    )
+    .fetch_all(&state.db)
+    .await?;
     Ok(Json(envelope(rows)))
 }
 
 async fn list_brands(
     State(state): State<AppState>,
 ) -> Result<Json<Envelope<Vec<Brand>>>, AppError> {
-    let rows = sqlx::query_as::<_, Brand>("SELECT id, name FROM brand ORDER BY name")
-        .fetch_all(&state.db)
-        .await?;
+    let rows = sqlx::query_as::<_, Brand>(
+        "SELECT id, name FROM brand WHERE is_active = TRUE ORDER BY name",
+    )
+    .fetch_all(&state.db)
+    .await?;
     Ok(Json(envelope(rows)))
 }
 
@@ -456,7 +603,7 @@ async fn list_discount_types(
     State(state): State<AppState>,
 ) -> Result<Json<Envelope<Vec<DiscountType>>>, AppError> {
     let rows = sqlx::query_as::<_, DiscountType>(
-        "SELECT id, name, description FROM discount_type ORDER BY name",
+        "SELECT id, name, description FROM discount_type WHERE is_active = TRUE ORDER BY name",
     )
     .fetch_all(&state.db)
     .await?;
@@ -472,17 +619,18 @@ async fn list_items(
         SELECT
             i.id,
             i.category_id,
-            i.name,
-            i.specification,
+            i.canonical_name AS name,
+            i.specification_text AS specification,
             i.created_at,
             COUNT(iv.id) AS variant_count,
-            MIN(CASE WHEN po.published THEN po.final_amount END) AS lowest_price
+            MIN(CASE WHEN po.status = 'verified' THEN po.final_price_amount END) AS lowest_price
         FROM item i
         LEFT JOIN item_variant iv ON iv.item_id = i.id
         LEFT JOIN price_observation po ON po.item_variant_id = iv.id
-        WHERE ($1::TEXT IS NULL OR i.name ILIKE '%' || $1 || '%' OR COALESCE(i.specification, '') ILIKE '%' || $1 || '%')
+        WHERE i.status = 'approved'
+          AND ($1::TEXT IS NULL OR i.canonical_name ILIKE '%' || $1 || '%' OR COALESCE(i.specification_text, '') ILIKE '%' || $1 || '%')
         GROUP BY i.id
-        ORDER BY i.name
+        ORDER BY i.canonical_name
         "#,
     )
     .bind(query.q)
@@ -523,8 +671,8 @@ async fn fetch_variant_summaries(
         SELECT
             iv.id,
             iv.item_id,
-            iv.quantity,
-            iv.website,
+            COALESCE(iv.normalized_content_quantity, iv.package_quantity) AS quantity,
+            sl.listing_url AS website,
             b.id AS brand_id,
             b.name AS brand_name,
             u.id AS unit_id,
@@ -532,22 +680,24 @@ async fn fetch_variant_summaries(
             u.symbol AS unit_symbol,
             (
                 SELECT json_build_object(
-                    'code', vi.code,
-                    'codeType', vi.code_type,
-                    'scope', vi.scope,
+                    'code', vi.identifier_value,
+                    'codeType', lower(vi.identifier_type),
+                    'scope', lower(vi.scope_type),
                     'shopId', vi.shop_id,
-                    'label', vi.label
+                    'label', CASE WHEN vi.scope_type = 'SHOP' THEN 'Shop code' ELSE 'Product code' END
                 )
                 FROM variant_identifier vi
-                WHERE vi.variant_id = iv.id
-                ORDER BY CASE WHEN vi.scope = 'global' THEN 0 ELSE 1 END, vi.label NULLS LAST
+                WHERE vi.item_variant_id = iv.id
+                ORDER BY CASE WHEN vi.scope_type = 'GLOBAL' THEN 0 ELSE 1 END, vi.is_primary DESC
                 LIMIT 1
             ) AS primary_product_code
         FROM item_variant iv
         JOIN brand b ON b.id = iv.brand_id
-        JOIN unit u ON u.id = iv.unit_id
+        JOIN unit u ON u.id = COALESCE(iv.normalized_content_unit_id, iv.package_unit_id)
+        LEFT JOIN shop_listing sl ON sl.item_variant_id = iv.id AND sl.is_active = TRUE
         WHERE ($1::uuid IS NULL OR iv.item_id = $1)
           AND ($2::uuid IS NULL OR iv.id = $2)
+          AND iv.status = 'approved'
         ORDER BY iv.id
         "#,
     )
@@ -586,7 +736,7 @@ async fn get_item(
     Path(item_id): Path<Uuid>,
 ) -> Result<Json<Envelope<ItemDetail>>, AppError> {
     let row = sqlx::query(
-        "SELECT id, category_id, name, specification, created_at FROM item WHERE id = $1",
+        "SELECT id, category_id, canonical_name AS name, specification_text AS specification, created_at FROM item WHERE id = $1 AND status = 'approved'",
     )
     .bind(item_id)
     .fetch_optional(&state.db)
@@ -623,7 +773,7 @@ async fn get_item_variant(
         .ok_or_else(|| AppError::NotFound("Variant not found".to_string()))?;
 
     let product_codes = sqlx::query(
-        "SELECT json_build_object('code', code, 'codeType', code_type, 'scope', scope, 'shopId', shop_id, 'label', label) AS value FROM variant_identifier WHERE variant_id = $1 ORDER BY code"
+        "SELECT json_build_object('code', identifier_value, 'codeType', lower(identifier_type), 'scope', lower(scope_type), 'shopId', shop_id, 'label', CASE WHEN scope_type = 'SHOP' THEN 'Shop code' ELSE 'Product code' END) AS value FROM variant_identifier WHERE item_variant_id = $1 ORDER BY identifier_value"
     )
     .bind(variant_id)
     .fetch_all(&state.db)
@@ -633,12 +783,12 @@ async fn get_item_variant(
     .filter_map(|value| serde_json::from_value(value).ok())
     .collect::<Vec<ProductCode>>();
 
-    let latest_known_price = sqlx::query("SELECT final_amount FROM price_observation WHERE item_variant_id = $1 AND published = TRUE ORDER BY recorded_at DESC LIMIT 1")
+    let latest_known_price = sqlx::query("SELECT final_price_amount FROM price_observation WHERE item_variant_id = $1 AND status = 'verified' ORDER BY observed_at DESC LIMIT 1")
         .bind(variant_id)
         .fetch_optional(&state.db)
         .await?
         .map(|row| Money {
-            amount: row.get("final_amount"),
+            amount: row.get("final_price_amount"),
             currency: "GBP".to_string(),
         });
 
@@ -651,7 +801,7 @@ async fn get_item_variant(
 
 fn row_to_public_price(row: PgRow) -> PublicPrice {
     let quantity: Decimal = row.get("quantity");
-    let final_amount: Decimal = row.get("final_amount");
+    let final_amount: Decimal = row.get("final_price_amount");
     let unit_symbol: String = row.get("unit_symbol");
     PublicPrice {
         item_variant_id: row.get("item_variant_id"),
@@ -661,19 +811,21 @@ fn row_to_public_price(row: PgRow) -> PublicPrice {
             display_address: row.get("display_address"),
         },
         price: PriceBreakdown {
-            original_amount: row.get("original_amount"),
-            currency: row.get("original_currency"),
+            original_amount: row.get("list_price_amount"),
+            currency: row.get("currency_code"),
             discount_amount: row.get("discount_amount"),
             final_amount,
-            unit_price: if quantity.is_zero() {
-                final_amount
-            } else {
-                final_amount / quantity
-            },
+            unit_price: row.try_get("unit_price_amount").unwrap_or_else(|_| {
+                if quantity.is_zero() {
+                    final_amount
+                } else {
+                    final_amount / quantity
+                }
+            }),
             unit_label: format!("GBP/{unit_symbol}"),
         },
-        recorded_at: row.get("recorded_at"),
-        verification: if row.get::<bool, _>("published") {
+        recorded_at: row.get("observed_at"),
+        verification: if row.get::<String, _>("status") == "verified" {
             "moderator".to_string()
         } else {
             "community".to_string()
@@ -689,24 +841,25 @@ async fn list_variant_prices(
         r#"
         SELECT
             po.item_variant_id,
-            po.original_amount,
-            po.original_currency,
+            COALESCE(po.list_price_amount, po.final_price_amount) AS list_price_amount,
+            po.currency_code,
             po.discount_amount,
-            po.final_amount,
-            po.recorded_at,
-            po.published,
+            po.final_price_amount,
+            po.unit_price_amount,
+            po.observed_at,
+            po.status,
             s.id AS shop_id,
             s.name AS shop_name,
-            s.display_address,
-            iv.quantity,
+            a.formatted_address AS display_address,
+            COALESCE(iv.normalized_content_quantity, iv.package_quantity) AS quantity,
             u.symbol AS unit_symbol
         FROM price_observation po
-        JOIN purchase p ON p.id = po.purchase_id
-        JOIN shop s ON s.id = p.shop_id
+        JOIN shop s ON s.id = po.shop_id
+        LEFT JOIN address a ON a.id = s.address_id
         JOIN item_variant iv ON iv.id = po.item_variant_id
-        JOIN unit u ON u.id = iv.unit_id
-        WHERE po.item_variant_id = $1 AND po.published = TRUE
-        ORDER BY po.recorded_at DESC
+        JOIN unit u ON u.id = COALESCE(iv.normalized_content_unit_id, iv.package_unit_id)
+        WHERE po.item_variant_id = $1 AND po.status = 'verified'
+        ORDER BY po.observed_at DESC
         "#,
     )
     .bind(variant_id)
@@ -723,12 +876,12 @@ async fn get_variant_price_history(
 ) -> Result<Json<Envelope<PriceHistory>>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT po.recorded_at, po.final_amount, iv.quantity, u.symbol AS unit_symbol
+        SELECT po.observed_at, po.final_price_amount, po.unit_price_amount, COALESCE(iv.normalized_content_quantity, iv.package_quantity) AS quantity, u.symbol AS unit_symbol
         FROM price_observation po
         JOIN item_variant iv ON iv.id = po.item_variant_id
-        JOIN unit u ON u.id = iv.unit_id
-        WHERE po.item_variant_id = $1 AND po.published = TRUE
-        ORDER BY po.recorded_at ASC
+        JOIN unit u ON u.id = COALESCE(iv.normalized_content_unit_id, iv.package_unit_id)
+        WHERE po.item_variant_id = $1 AND po.status = 'verified'
+        ORDER BY po.observed_at ASC
         "#,
     )
     .bind(variant_id)
@@ -742,16 +895,18 @@ async fn get_variant_price_history(
     let points = rows
         .into_iter()
         .map(|row| {
-            let final_amount: Decimal = row.get("final_amount");
+            let final_amount: Decimal = row.get("final_price_amount");
             let quantity: Decimal = row.get("quantity");
             PriceHistoryPoint {
-                recorded_at: row.get("recorded_at"),
+                recorded_at: row.get("observed_at"),
                 final_amount,
-                unit_price: if quantity.is_zero() {
-                    final_amount
-                } else {
-                    final_amount / quantity
-                },
+                unit_price: row.try_get("unit_price_amount").unwrap_or_else(|_| {
+                    if quantity.is_zero() {
+                        final_amount
+                    } else {
+                        final_amount / quantity
+                    }
+                }),
             }
         })
         .collect();
@@ -779,24 +934,25 @@ async fn compare_variants_internal(
                 r#"
                 SELECT
                     po.item_variant_id,
-                    po.original_amount,
-                    po.original_currency,
+                    COALESCE(po.list_price_amount, po.final_price_amount) AS list_price_amount,
+                    po.currency_code,
                     po.discount_amount,
-                    po.final_amount,
-                    po.recorded_at,
-                    po.published,
+                    po.final_price_amount,
+                    po.unit_price_amount,
+                    po.observed_at,
+                    po.status,
                     s.id AS shop_id,
                     s.name AS shop_name,
-                    s.display_address,
-                    iv.quantity,
+                    a.formatted_address AS display_address,
+                    COALESCE(iv.normalized_content_quantity, iv.package_quantity) AS quantity,
                     u.symbol AS unit_symbol
                 FROM price_observation po
-                JOIN purchase p ON p.id = po.purchase_id
-                JOIN shop s ON s.id = p.shop_id
+                JOIN shop s ON s.id = po.shop_id
+                LEFT JOIN address a ON a.id = s.address_id
                 JOIN item_variant iv ON iv.id = po.item_variant_id
-                JOIN unit u ON u.id = iv.unit_id
-                WHERE po.item_variant_id = $1 AND po.published = TRUE
-                ORDER BY po.final_amount ASC, po.recorded_at DESC
+                JOIN unit u ON u.id = COALESCE(iv.normalized_content_unit_id, iv.package_unit_id)
+                WHERE po.item_variant_id = $1 AND po.status = 'verified'
+                ORDER BY po.final_price_amount ASC, po.observed_at DESC
                 "#,
             )
             .bind(variant_id)
@@ -852,7 +1008,13 @@ async fn list_shops(
     State(state): State<AppState>,
 ) -> Result<Json<Envelope<Vec<ShopSummary>>>, AppError> {
     let rows = sqlx::query_as::<_, ShopSummary>(
-        "SELECT id, name, display_address FROM shop ORDER BY name",
+        r#"
+        SELECT s.id, s.name, a.formatted_address AS display_address
+        FROM shop s
+        LEFT JOIN address a ON a.id = s.address_id
+        WHERE s.is_active = TRUE
+        ORDER BY s.name
+        "#,
     )
     .fetch_all(&state.db)
     .await?;
@@ -864,7 +1026,12 @@ async fn get_shop(
     Path(shop_id): Path<Uuid>,
 ) -> Result<Json<Envelope<ShopDetail>>, AppError> {
     let row = sqlx::query_as::<_, ShopDetail>(
-        "SELECT id, name, display_address, is_verified FROM shop WHERE id = $1",
+        r#"
+        SELECT s.id, s.name, a.formatted_address AS display_address, s.is_active AS is_verified
+        FROM shop s
+        LEFT JOIN address a ON a.id = s.address_id
+        WHERE s.id = $1
+        "#,
     )
     .bind(shop_id)
     .fetch_optional(&state.db)
@@ -881,13 +1048,13 @@ async fn lookup_product_code(
         r#"
         SELECT
             iv.id AS variant_id,
-            i.name AS item_name,
+            i.canonical_name AS item_name,
             b.name AS brand_name
         FROM variant_identifier vi
-        JOIN item_variant iv ON iv.id = vi.variant_id
+        JOIN item_variant iv ON iv.id = vi.item_variant_id
         JOIN item i ON i.id = iv.item_id
         JOIN brand b ON b.id = iv.brand_id
-        WHERE vi.code = $1 AND (vi.shop_id = $2 OR vi.scope = 'global')
+        WHERE vi.identifier_value = $1 AND (vi.shop_id = $2 OR vi.scope_type = 'GLOBAL')
         LIMIT 1
         "#,
     )
@@ -910,17 +1077,41 @@ async fn create_file_upload_intent(
     Json(payload): Json<FileUploadIntentRequest>,
 ) -> Result<(StatusCode, Json<Envelope<FileUploadIntent>>), AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
+    let storage_object_id = Uuid::new_v4();
     let file_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO file_asset (id, owner_account_id, filename, content_type, size_bytes, purpose, storage_key) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        r#"
+        INSERT INTO storage_object (
+            id, storage_provider, bucket_name, object_key, checksum_sha256, size_bytes, encryption_key_ref, created_at, deleted_at
+        ) VALUES ($1, 'local-dev', 'pricetracker-private', $2, $3, $4, NULL, NOW(), NULL)
+        "#,
+    )
+    .bind(storage_object_id)
+    .bind(format!("uploads/{file_id}/{}", payload.filename))
+    .bind(
+        payload
+            .checksum_sha256
+            .clone()
+            .unwrap_or_else(|| "0000000000000000000000000000000000000000000000000000000000000000".to_string()),
+    )
+    .bind(payload.size)
+    .execute(&state.db)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO file_asset (
+            id, storage_object_id, owner_account_id, original_filename, mime_type, file_extension,
+            purpose_code, classification_code, is_deleted, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'private', FALSE, NOW())
+        "#,
     )
     .bind(file_id)
+    .bind(storage_object_id)
     .bind(account_id)
     .bind(&payload.filename)
     .bind(&payload.content_type)
-    .bind(payload.size)
+    .bind(file_extension(&payload.filename))
     .bind(&payload.purpose)
-    .bind(format!("uploads/{file_id}/{}", payload.filename))
     .execute(&state.db)
     .await?;
 
@@ -944,10 +1135,18 @@ async fn complete_file_upload(
 ) -> Result<Json<Envelope<FileRecord>>, AppError> {
     let row = sqlx::query_as::<_, FileRecord>(
         r#"
-        UPDATE file_asset
-        SET status = 'ready', metadata_stripped = TRUE
-        WHERE id = $1
-        RETURNING id, filename, content_type, size_bytes AS size, purpose, status, metadata_stripped, created_at
+        SELECT
+            fa.id,
+            fa.original_filename AS filename,
+            fa.mime_type AS content_type,
+            so.size_bytes AS size,
+            fa.purpose_code AS purpose,
+            CASE WHEN fa.is_deleted THEN 'deleted' ELSE 'ready' END AS status,
+            TRUE AS metadata_stripped,
+            fa.created_at
+        FROM file_asset fa
+        JOIN storage_object so ON so.id = fa.storage_object_id
+        WHERE fa.id = $1
         "#,
     )
     .bind(file_id)
@@ -964,7 +1163,20 @@ async fn get_own_file(
 ) -> Result<Json<Envelope<FileRecord>>, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let row = sqlx::query_as::<_, FileRecord>(
-        "SELECT id, filename, content_type, size_bytes AS size, purpose, status, metadata_stripped, created_at FROM file_asset WHERE id = $1 AND owner_account_id = $2",
+        r#"
+        SELECT
+            fa.id,
+            fa.original_filename AS filename,
+            fa.mime_type AS content_type,
+            so.size_bytes AS size,
+            fa.purpose_code AS purpose,
+            CASE WHEN fa.is_deleted THEN 'deleted' ELSE 'ready' END AS status,
+            TRUE AS metadata_stripped,
+            fa.created_at
+        FROM file_asset fa
+        JOIN storage_object so ON so.id = fa.storage_object_id
+        WHERE fa.id = $1 AND fa.owner_account_id = $2
+        "#,
     )
     .bind(file_id)
     .bind(account_id)
@@ -992,7 +1204,7 @@ async fn fetch_purchase(
     account_id: Uuid,
 ) -> Result<Purchase, AppError> {
     let row = sqlx::query(
-        "SELECT id, shop_id, purchase_time, notes, status, created_at, updated_at FROM purchase WHERE id = $1 AND account_id = $2",
+        "SELECT id, shop_id, purchased_at, notes, created_at, updated_at FROM purchase WHERE id = $1 AND purchaser_account_id = $2",
     )
     .bind(purchase_id)
     .bind(account_id)
@@ -1002,10 +1214,19 @@ async fn fetch_purchase(
 
     let attachments = sqlx::query_as::<_, FileRecord>(
         r#"
-        SELECT fa.id, fa.filename, fa.content_type, fa.size_bytes AS size, fa.purpose, fa.status, fa.metadata_stripped, fa.created_at
+        SELECT
+            fa.id,
+            fa.original_filename AS filename,
+            fa.mime_type AS content_type,
+            so.size_bytes AS size,
+            fa.purpose_code AS purpose,
+            CASE WHEN fa.is_deleted THEN 'deleted' ELSE 'ready' END AS status,
+            TRUE AS metadata_stripped,
+            fa.created_at
         FROM file_attachment f
-        JOIN file_asset fa ON fa.id = f.file_id
-        WHERE f.attached_to_type = 'purchase' AND f.attached_to_id = $1
+        JOIN file_asset fa ON fa.id = f.file_asset_id
+        JOIN storage_object so ON so.id = fa.storage_object_id
+        WHERE f.entity_type = 'purchase' AND f.entity_id = $1 AND f.removed_at IS NULL
         ORDER BY fa.created_at
         "#,
     )
@@ -1016,10 +1237,10 @@ async fn fetch_purchase(
     Ok(Purchase {
         id: row.get("id"),
         shop_id: row.get("shop_id"),
-        purchase_time: row.get("purchase_time"),
+        purchase_time: row.get("purchased_at"),
         attachments,
         notes: row.get("notes"),
-        status: row.get("status"),
+        status: "active".to_string(),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -1033,7 +1254,7 @@ async fn create_purchase(
     let account_id = current_account_id(&state.db, &headers).await?;
     let purchase_id = Uuid::new_v4();
     let mut tx = state.db.begin().await?;
-    sqlx::query("INSERT INTO purchase (id, account_id, shop_id, purchase_time, notes) VALUES ($1, $2, $3, $4, $5)")
+    sqlx::query("INSERT INTO purchase (id, purchaser_account_id, shop_id, purchased_at, currency_code, receipt_number, seller_tax_identifier, total_amount, tax_amount, notes, created_at, updated_at) VALUES ($1, $2, $3, $4, 'GBP', NULL, NULL, NULL, NULL, $5, NOW(), NOW())")
         .bind(purchase_id)
         .bind(account_id)
         .bind(payload.shop_id)
@@ -1042,12 +1263,16 @@ async fn create_purchase(
         .execute(&mut *tx)
         .await?;
     if let Some(file_ids) = payload.attachment_file_ids {
-        for file_id in file_ids {
+        for (index, file_id) in file_ids.into_iter().enumerate() {
             sqlx::query(
-                "INSERT INTO file_attachment (file_id, attached_to_type, attached_to_id, attachment_role) VALUES ($1, 'purchase', $2, 'receipt')",
+                "INSERT INTO file_attachment (id, file_asset_id, entity_type, entity_id, attachment_role, sort_order, is_primary, attached_by_account_id, metadata_json, created_at, removed_at) VALUES ($1, $2, 'purchase', $3, 'receipt', $4, $5, $6, NULL, NOW(), NULL)",
             )
+            .bind(Uuid::new_v4())
             .bind(file_id)
             .bind(purchase_id)
+            .bind(index as i32)
+            .bind(index == 0)
+            .bind(account_id)
             .execute(&mut *tx)
             .await?;
         }
@@ -1066,10 +1291,12 @@ async fn list_own_purchases(
     headers: HeaderMap,
 ) -> Result<Json<Envelope<Vec<Purchase>>>, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
-    let ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM purchase WHERE account_id = $1 AND status <> 'deleted' ORDER BY purchase_time DESC")
-        .bind(account_id)
-        .fetch_all(&state.db)
-        .await?;
+    let ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM purchase WHERE purchaser_account_id = $1 ORDER BY purchased_at DESC",
+    )
+    .bind(account_id)
+    .fetch_all(&state.db)
+    .await?;
     let mut purchases = Vec::new();
     for id in ids {
         purchases.push(fetch_purchase(&state.db, id, account_id).await?);
@@ -1098,10 +1325,10 @@ async fn update_own_purchase(
     sqlx::query(
         r#"
         UPDATE purchase
-        SET purchase_time = COALESCE($3, purchase_time),
+        SET purchased_at = COALESCE($3, purchased_at),
             notes = COALESCE($4, notes),
             updated_at = NOW()
-        WHERE id = $1 AND account_id = $2
+        WHERE id = $1 AND purchaser_account_id = $2
         "#,
     )
     .bind(purchase_id)
@@ -1112,16 +1339,20 @@ async fn update_own_purchase(
     .await?;
 
     if let Some(file_ids) = payload.attachment_file_ids {
-        sqlx::query("DELETE FROM file_attachment WHERE attached_to_type = 'purchase' AND attached_to_id = $1")
+        sqlx::query("UPDATE file_attachment SET removed_at = NOW() WHERE entity_type = 'purchase' AND entity_id = $1 AND removed_at IS NULL")
             .bind(purchase_id)
             .execute(&state.db)
             .await?;
-        for file_id in file_ids {
+        for (index, file_id) in file_ids.into_iter().enumerate() {
             sqlx::query(
-                "INSERT INTO file_attachment (file_id, attached_to_type, attached_to_id, attachment_role) VALUES ($1, 'purchase', $2, 'receipt')",
+                "INSERT INTO file_attachment (id, file_asset_id, entity_type, entity_id, attachment_role, sort_order, is_primary, attached_by_account_id, metadata_json, created_at, removed_at) VALUES ($1, $2, 'purchase', $3, 'receipt', $4, $5, $6, NULL, NOW(), NULL)",
             )
+            .bind(Uuid::new_v4())
             .bind(file_id)
             .bind(purchase_id)
+            .bind(index as i32)
+            .bind(index == 0)
+            .bind(account_id)
             .execute(&state.db)
             .await?;
         }
@@ -1138,7 +1369,15 @@ async fn delete_own_purchase(
     Path(purchase_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
-    sqlx::query("UPDATE purchase SET status = 'deleted', updated_at = NOW() WHERE id = $1 AND account_id = $2")
+    sqlx::query("DELETE FROM file_attachment WHERE entity_type = 'purchase' AND entity_id = $1")
+        .bind(purchase_id)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM purchase_line WHERE purchase_id = $1")
+        .bind(purchase_id)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM purchase WHERE id = $1 AND purchaser_account_id = $2")
         .bind(purchase_id)
         .bind(account_id)
         .execute(&state.db)
@@ -1153,10 +1392,24 @@ async fn fetch_price_submission(
 ) -> Result<PriceSubmission, AppError> {
     let row = sqlx::query(
         r#"
-        SELECT id, item_variant_id, purchase_id, original_amount, original_currency, discount_amount, discount_currency,
-               discount_type_id, final_amount, submission_status, visibility, published, recorded_at, notes, created_at
-        FROM price_observation
-        WHERE id = $1 AND account_id = $2
+        SELECT
+            po.id,
+            po.item_variant_id,
+            pl.purchase_id,
+            COALESCE(po.list_price_amount, po.final_price_amount) AS original_amount,
+            po.currency_code AS original_currency,
+            po.discount_amount,
+            po.currency_code AS discount_currency,
+            po.discount_type_id,
+            po.final_price_amount AS final_amount,
+            po.status AS submission_status,
+            po.observed_at AS recorded_at,
+            po.notes,
+            po.created_at
+        FROM price_observation po
+        JOIN purchase_line pl ON pl.price_observation_id = po.id
+        JOIN purchase p ON p.id = pl.purchase_id
+        WHERE po.id = $1 AND p.purchaser_account_id = $2
         "#,
     )
     .bind(price_id)
@@ -1176,8 +1429,12 @@ async fn fetch_price_submission(
         discount_type_id: row.get("discount_type_id"),
         final_amount: row.get("final_amount"),
         submission_status: row.get("submission_status"),
-        visibility: row.get("visibility"),
-        published: row.get("published"),
+        visibility: if row.get::<String, _>("submission_status") == "verified" {
+            "public".to_string()
+        } else {
+            "private".to_string()
+        },
+        published: row.get::<String, _>("submission_status") == "verified",
         recorded_at: row.get("recorded_at"),
         notes: row.get("notes"),
         created_at: row.get("created_at"),
@@ -1190,30 +1447,64 @@ async fn create_price_submission(
     Json(payload): Json<PriceCreateRequest>,
 ) -> Result<(StatusCode, Json<Envelope<PriceSubmission>>), AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
+    let purchase_shop_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT shop_id FROM purchase WHERE id = $1 AND purchaser_account_id = $2",
+    )
+    .bind(payload.purchase_id)
+    .bind(account_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Purchase not found for current user".to_string()))?;
+    let source_id = ensure_user_source(&state.db, account_id).await?;
     let final_amount = payload.original_amount - payload.discount_amount.unwrap_or(Decimal::ZERO);
     let price_id = Uuid::new_v4();
+    let quantity = sqlx::query_scalar::<_, Decimal>(
+        "SELECT COALESCE(normalized_content_quantity, package_quantity) FROM item_variant WHERE id = $1",
+    )
+    .bind(payload.item_variant_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Item variant not found".to_string()))?;
+    let unit_price = if quantity.is_zero() {
+        final_amount
+    } else {
+        final_amount / quantity
+    };
+    let mut tx = state.db.begin().await?;
     sqlx::query(
         r#"
         INSERT INTO price_observation (
-            id, account_id, item_variant_id, purchase_id, original_amount, original_currency,
-            discount_amount, discount_currency, discount_type_id, final_amount, recorded_at, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            id, item_variant_id, shop_id, shop_listing_id, source_id, observed_at, currency_code,
+            list_price_amount, final_price_amount, discount_amount, discount_type_id, unit_price_amount,
+            unit_price_unit_id, status, confidence_score, notes, created_at, updated_at
+        ) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, $10, $11,
+                  (SELECT COALESCE(normalized_content_unit_id, package_unit_id) FROM item_variant WHERE id = $2),
+                  'submitted', 50.00, $12, NOW(), NOW())
         "#,
     )
     .bind(price_id)
-    .bind(account_id)
     .bind(payload.item_variant_id)
-    .bind(payload.purchase_id)
-    .bind(payload.original_amount)
-    .bind(payload.original_currency)
-    .bind(payload.discount_amount)
-    .bind(payload.discount_currency)
-    .bind(payload.discount_type_id)
-    .bind(final_amount)
+    .bind(purchase_shop_id)
+    .bind(source_id)
     .bind(payload.recorded_at)
+    .bind(payload.original_currency)
+    .bind(payload.original_amount)
+    .bind(final_amount)
+    .bind(payload.discount_amount)
+    .bind(payload.discount_type_id)
+    .bind(unit_price)
     .bind(payload.notes)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+    sqlx::query(
+        "INSERT INTO purchase_line (id, purchase_id, price_observation_id, line_number, quantity_purchased, batch_code, serial_number, vat_rate, notes, created_at) VALUES ($1, $2, $3, NULL, 1.000000, NULL, NULL, NULL, NULL, NOW())",
+    )
+    .bind(Uuid::new_v4())
+    .bind(payload.purchase_id)
+    .bind(price_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
 
     Ok((
         StatusCode::CREATED,
@@ -1229,7 +1520,14 @@ async fn list_own_price_submissions(
 ) -> Result<Json<Envelope<Vec<PriceSubmission>>>, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM price_observation WHERE account_id = $1 ORDER BY recorded_at DESC",
+        r#"
+        SELECT po.id
+        FROM price_observation po
+        JOIN purchase_line pl ON pl.price_observation_id = po.id
+        JOIN purchase p ON p.id = pl.purchase_id
+        WHERE p.purchaser_account_id = $1
+        ORDER BY po.observed_at DESC
+        "#,
     )
     .bind(account_id)
     .fetch_all(&state.db)
@@ -1263,20 +1561,38 @@ async fn update_own_price_submission(
     let original_amount = payload.original_amount.unwrap_or(current.original_amount);
     let discount_amount = payload.discount_amount.or(current.discount_amount);
     let final_amount = original_amount - discount_amount.unwrap_or(Decimal::ZERO);
+    let quantity = sqlx::query_scalar::<_, Decimal>(
+        "SELECT COALESCE(normalized_content_quantity, package_quantity) FROM item_variant WHERE id = $1",
+    )
+    .bind(current.item_variant_id)
+    .fetch_one(&state.db)
+    .await?;
+    let unit_price = if quantity.is_zero() {
+        final_amount
+    } else {
+        final_amount / quantity
+    };
 
     sqlx::query(
         r#"
         UPDATE price_observation
-        SET original_amount = $3,
-            original_currency = COALESCE($4, original_currency),
+        SET list_price_amount = $3,
+            currency_code = COALESCE($4, currency_code),
             discount_amount = $5,
-            discount_currency = COALESCE($6, discount_currency),
-            discount_type_id = COALESCE($7, discount_type_id),
-            final_amount = $8,
-            recorded_at = COALESCE($9, recorded_at),
+            discount_type_id = COALESCE($6, discount_type_id),
+            final_price_amount = $7,
+            unit_price_amount = $8,
+            observed_at = COALESCE($9, observed_at),
             notes = COALESCE($10, notes),
             updated_at = NOW()
-        WHERE id = $1 AND account_id = $2
+        WHERE id = $1
+          AND EXISTS (
+              SELECT 1
+              FROM purchase_line pl
+              JOIN purchase p ON p.id = pl.purchase_id
+              WHERE pl.price_observation_id = price_observation.id
+                AND p.purchaser_account_id = $2
+          )
         "#,
     )
     .bind(price_id)
@@ -1284,9 +1600,9 @@ async fn update_own_price_submission(
     .bind(original_amount)
     .bind(payload.original_currency)
     .bind(discount_amount)
-    .bind(payload.discount_currency)
     .bind(payload.discount_type_id)
     .bind(final_amount)
+    .bind(unit_price)
     .bind(payload.recorded_at)
     .bind(payload.notes)
     .execute(&state.db)
@@ -1303,9 +1619,22 @@ async fn delete_own_price_submission(
     Path(price_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
-    sqlx::query("DELETE FROM price_observation WHERE id = $1 AND account_id = $2")
+    sqlx::query(
+        r#"
+        DELETE FROM purchase_line
+        WHERE price_observation_id = $1
+          AND EXISTS (
+              SELECT 1 FROM purchase p
+              WHERE p.id = purchase_line.purchase_id AND p.purchaser_account_id = $2
+          )
+        "#,
+    )
+    .bind(price_id)
+    .bind(account_id)
+    .execute(&state.db)
+    .await?;
+    sqlx::query("DELETE FROM price_observation WHERE id = $1")
         .bind(price_id)
-        .bind(account_id)
         .execute(&state.db)
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1361,7 +1690,7 @@ async fn list_alerts(
 ) -> Result<Json<Envelope<Vec<Alert>>>, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let rows = sqlx::query_as::<_, Alert>(
-        "SELECT id, item_variant_id, target_final_amount, currency, is_enabled, created_at FROM price_alert WHERE account_id = $1 ORDER BY created_at DESC",
+        "SELECT id, item_variant_id, target_price_amount AS target_final_amount, currency_code AS currency, is_active AS is_enabled, created_at FROM price_alert WHERE account_id = $1 ORDER BY created_at DESC",
     )
     .bind(account_id)
     .fetch_all(&state.db)
@@ -1376,8 +1705,9 @@ async fn create_alert(
 ) -> Result<(StatusCode, Json<Envelope<Alert>>), AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let alert = sqlx::query_as::<_, Alert>(
-        "INSERT INTO price_alert (account_id, item_variant_id, target_final_amount, currency, is_enabled) VALUES ($1, $2, $3, $4, $5) RETURNING id, item_variant_id, target_final_amount, currency, is_enabled, created_at",
+        "INSERT INTO price_alert (id, account_id, item_variant_id, shop_id, target_price_amount, currency_code, is_active, last_triggered_at, created_at, updated_at) VALUES ($1, $2, $3, NULL, $4, $5, $6, NULL, NOW(), NOW()) RETURNING id, item_variant_id, target_price_amount AS target_final_amount, currency_code AS currency, is_active AS is_enabled, created_at",
     )
+    .bind(Uuid::new_v4())
     .bind(account_id)
     .bind(payload.item_variant_id)
     .bind(payload.target_final_amount)
@@ -1398,11 +1728,12 @@ async fn update_alert(
     let row = sqlx::query_as::<_, Alert>(
         r#"
         UPDATE price_alert
-        SET target_final_amount = COALESCE($3, target_final_amount),
-            currency = COALESCE($4, currency),
-            is_enabled = COALESCE($5, is_enabled)
+        SET target_price_amount = COALESCE($3, target_price_amount),
+            currency_code = COALESCE($4, currency_code),
+            is_active = COALESCE($5, is_active),
+            updated_at = NOW()
         WHERE id = $1 AND account_id = $2
-        RETURNING id, item_variant_id, target_final_amount, currency, is_enabled, created_at
+        RETURNING id, item_variant_id, target_price_amount AS target_final_amount, currency_code AS currency, is_active AS is_enabled, created_at
         "#,
     )
     .bind(alert_id)
@@ -1433,9 +1764,18 @@ async fn delete_alert(
 async fn list_moderation_prices(
     State(state): State<AppState>,
 ) -> Result<Json<Envelope<Vec<PriceSubmission>>>, AppError> {
-    let rows = sqlx::query("SELECT id, account_id FROM price_observation WHERE submission_status IN ('submitted', 'flagged') ORDER BY created_at ASC")
-        .fetch_all(&state.db)
-        .await?;
+    let rows = sqlx::query(
+        r#"
+        SELECT po.id, p.purchaser_account_id AS account_id
+        FROM price_observation po
+        JOIN purchase_line pl ON pl.price_observation_id = po.id
+        JOIN purchase p ON p.id = pl.purchase_id
+        WHERE po.status IN ('submitted', 'flagged')
+        ORDER BY po.created_at ASC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await?;
     let mut list = Vec::new();
     for row in rows {
         list.push(fetch_price_submission(&state.db, row.get("id"), row.get("account_id")).await?);
@@ -1448,10 +1788,12 @@ async fn verify_moderation_price(
     Path(price_id): Path<Uuid>,
     Json(_payload): Json<ModerateActionRequest>,
 ) -> Result<Json<Envelope<Acknowledgement>>, AppError> {
-    sqlx::query("UPDATE price_observation SET submission_status = 'verified', visibility = 'public', published = TRUE, updated_at = NOW() WHERE id = $1")
-        .bind(price_id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "UPDATE price_observation SET status = 'verified', updated_at = NOW() WHERE id = $1",
+    )
+    .bind(price_id)
+    .execute(&state.db)
+    .await?;
     Ok(Json(envelope(Acknowledgement {
         status: "verified".to_string(),
     })))
@@ -1462,10 +1804,12 @@ async fn reject_moderation_price(
     Path(price_id): Path<Uuid>,
     Json(_payload): Json<ModerateActionRequest>,
 ) -> Result<Json<Envelope<Acknowledgement>>, AppError> {
-    sqlx::query("UPDATE price_observation SET submission_status = 'rejected', published = FALSE, updated_at = NOW() WHERE id = $1")
-        .bind(price_id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "UPDATE price_observation SET status = 'rejected', updated_at = NOW() WHERE id = $1",
+    )
+    .bind(price_id)
+    .execute(&state.db)
+    .await?;
     Ok(Json(envelope(Acknowledgement {
         status: "rejected".to_string(),
     })))
@@ -1501,8 +1845,9 @@ async fn create_own_email(
 ) -> Result<(StatusCode, Json<Envelope<EmailAddress>>), AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let row = sqlx::query_as::<_, EmailAddress>(
-        "INSERT INTO account_email (account_id, email, normalized_email, email_role, is_login_enabled, is_primary_for_account) VALUES ($1, $2, $3, $4, $5, FALSE) RETURNING id, email, email_role, is_login_enabled, is_primary_for_account, verified_at, created_at",
+        "INSERT INTO account_email (id, account_id, email, normalized_email, email_role, is_login_enabled, is_primary_for_account, verified_at, verification_method, created_at, updated_at, deleted_at) VALUES ($1, $2, $3, $4, $5, $6, FALSE, NULL, NULL, NOW(), NOW(), NULL) RETURNING id, email, email_role, is_login_enabled, is_primary_for_account, verified_at, created_at",
     )
+    .bind(Uuid::new_v4())
     .bind(account_id)
     .bind(&payload.email)
     .bind(payload.email.to_lowercase())
@@ -1575,7 +1920,7 @@ async fn list_own_phones(
 ) -> Result<Json<Envelope<Vec<PhoneNumber>>>, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let rows = sqlx::query_as::<_, PhoneNumber>(
-        "SELECT id, phone_number, is_primary_for_account, verified_at, created_at FROM account_phone WHERE account_id = $1 AND deleted_at IS NULL ORDER BY is_primary_for_account DESC, created_at ASC",
+        "SELECT id, e164_phone_number AS phone_number, is_primary_for_account, verified_at, created_at FROM account_phone WHERE account_id = $1 AND deleted_at IS NULL ORDER BY is_primary_for_account DESC, created_at ASC",
     )
     .bind(account_id)
     .fetch_all(&state.db)
@@ -1590,8 +1935,9 @@ async fn create_own_phone(
 ) -> Result<(StatusCode, Json<Envelope<PhoneNumber>>), AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let row = sqlx::query_as::<_, PhoneNumber>(
-        "INSERT INTO account_phone (account_id, phone_number, is_primary_for_account) VALUES ($1, $2, FALSE) RETURNING id, phone_number, is_primary_for_account, verified_at, created_at",
+        "INSERT INTO account_phone (id, account_id, e164_phone_number, extension, phone_role, is_sms_enabled, is_voice_enabled, is_primary_for_account, verified_at, verification_method, created_at, updated_at, deleted_at) VALUES ($1, $2, $3, NULL, 'SECONDARY', TRUE, TRUE, FALSE, NULL, NULL, NOW(), NOW(), NULL) RETURNING id, e164_phone_number AS phone_number, is_primary_for_account, verified_at, created_at",
     )
+    .bind(Uuid::new_v4())
     .bind(account_id)
     .bind(payload.phone_number)
     .fetch_one(&state.db)
@@ -1621,7 +1967,7 @@ async fn verify_own_phone(
 ) -> Result<Json<Envelope<PhoneNumber>>, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let row = sqlx::query_as::<_, PhoneNumber>(
-        "UPDATE account_phone SET verified_at = NOW() WHERE id = $1 AND account_id = $2 RETURNING id, phone_number, is_primary_for_account, verified_at, created_at",
+        "UPDATE account_phone SET verified_at = NOW(), verification_method = 'code', updated_at = NOW() WHERE id = $1 AND account_id = $2 RETURNING id, e164_phone_number AS phone_number, is_primary_for_account, verified_at, created_at",
     )
     .bind(phone_id)
     .bind(account_id)
@@ -1659,10 +2005,17 @@ async fn list_current_legal_documents(
     State(state): State<AppState>,
 ) -> Result<Json<Envelope<Vec<LegalDocument>>>, AppError> {
     let rows = sqlx::query_as::<_, LegalDocument>(
-        "SELECT id, document_key, version, title, content_url FROM legal_document WHERE is_current = TRUE ORDER BY document_key",
+        "SELECT id, notice_kind AS document_key, version_label AS version, notice_kind AS title, NULL::text AS content_url FROM privacy_notice_version WHERE retired_at IS NULL ORDER BY notice_kind, published_at DESC",
     )
     .fetch_all(&state.db)
     .await?;
+    let rows = rows
+        .into_iter()
+        .map(|mut doc| {
+            doc.title = notice_title(&doc.title);
+            doc
+        })
+        .collect::<Vec<_>>();
     Ok(Json(envelope(rows)))
 }
 
@@ -1672,7 +2025,14 @@ async fn list_own_privacy_consents(
 ) -> Result<Json<Envelope<Vec<PrivacyConsent>>>, AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     let rows = sqlx::query_as::<_, PrivacyConsent>(
-        "SELECT id, document_key, version, accepted_at FROM consent_record WHERE account_id = $1 ORDER BY accepted_at DESC",
+        r#"
+        SELECT cr.id, pp.code AS document_key, COALESCE(pnv.version_label, 'unknown') AS version, cr.captured_at AS accepted_at
+        FROM consent_record cr
+        JOIN processing_purpose pp ON pp.id = cr.processing_purpose_id
+        LEFT JOIN privacy_notice_version pnv ON pnv.id = cr.notice_version_id
+        WHERE cr.account_id = $1
+        ORDER BY cr.captured_at DESC
+        "#,
     )
     .bind(account_id)
     .fetch_all(&state.db)
@@ -1687,17 +2047,43 @@ async fn accept_current_privacy_documents(
 ) -> Result<(StatusCode, Json<Envelope<Vec<PrivacyConsent>>>), AppError> {
     let account_id = current_account_id(&state.db, &headers).await?;
     for doc in payload.accepted_legal_documents {
-        sqlx::query(
-            "INSERT INTO consent_record (account_id, document_key, version) VALUES ($1, $2, $3)",
+        let purpose_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM processing_purpose WHERE code = $1 LIMIT 1",
         )
+        .bind(&doc.document_key)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Unsupported legal document key: {}",
+                doc.document_key
+            ))
+        })?;
+        let notice_id = current_notice_id(&state.db, &doc.document_key, Some(&doc.version)).await?;
+        sqlx::query(
+            r#"
+            INSERT INTO consent_record (
+                id, account_id, anonymous_subject_token_hash, processing_purpose_id, notice_version_id,
+                consent_status, captured_via, evidence_json, captured_at, withdrawn_at
+            ) VALUES ($1, $2, NULL, $3, $4, 'accepted', 'api', '{"source":"privacy-consent"}'::jsonb, NOW(), NULL)
+            "#,
+        )
+        .bind(Uuid::new_v4())
         .bind(account_id)
-        .bind(doc.document_key)
-        .bind(doc.version)
+        .bind(purpose_id)
+        .bind(notice_id)
         .execute(&state.db)
         .await?;
     }
     let rows = sqlx::query_as::<_, PrivacyConsent>(
-        "SELECT id, document_key, version, accepted_at FROM consent_record WHERE account_id = $1 ORDER BY accepted_at DESC",
+        r#"
+        SELECT cr.id, pp.code AS document_key, COALESCE(pnv.version_label, 'unknown') AS version, cr.captured_at AS accepted_at
+        FROM consent_record cr
+        JOIN processing_purpose pp ON pp.id = cr.processing_purpose_id
+        LEFT JOIN privacy_notice_version pnv ON pnv.id = cr.notice_version_id
+        WHERE cr.account_id = $1
+        ORDER BY cr.captured_at DESC
+        "#,
     )
     .bind(account_id)
     .fetch_all(&state.db)
@@ -1705,24 +2091,69 @@ async fn accept_current_privacy_documents(
     Ok((StatusCode::CREATED, Json(envelope(rows))))
 }
 
-async fn get_cookie_preferences() -> Json<Envelope<CookiePreferences>> {
-    Json(envelope(CookiePreferences {
-        analytics: true,
+async fn get_cookie_preferences(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Envelope<CookiePreferences>>, AppError> {
+    let account_id = current_account_id(&state.db, &headers).await?;
+    let row = sqlx::query(
+        r#"
+        SELECT preferences_allowed, analytics_allowed, marketing_allowed, updated_at
+        FROM cookie_consent
+        WHERE account_id = $1 AND withdrawn_at IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let preferences = row.map(|row| CookiePreferences {
+        analytics: row.get("analytics_allowed"),
+        marketing: row.get("marketing_allowed"),
+        preferences: row.get("preferences_allowed"),
+        updated_at: row.get("updated_at"),
+    });
+
+    Ok(Json(envelope(preferences.unwrap_or(CookiePreferences {
+        analytics: false,
         marketing: false,
-        preferences: true,
+        preferences: false,
         updated_at: Utc::now(),
-    }))
+    }))))
 }
 
 async fn update_cookie_preferences(
+    State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<CookiePreferencesUpdateRequest>,
-) -> Json<Envelope<CookiePreferences>> {
-    Json(envelope(CookiePreferences {
+) -> Result<Json<Envelope<CookiePreferences>>, AppError> {
+    let account_id = current_account_id(&state.db, &headers).await?;
+    let notice_id = current_notice_id(&state.db, "cookie_policy", None).await?;
+    sqlx::query(
+        r#"
+        INSERT INTO cookie_consent (
+            id, account_id, anonymous_subject_token_hash, notice_version_id, preferences_allowed,
+            analytics_allowed, marketing_allowed, captured_at, updated_at, withdrawn_at
+        ) VALUES ($1, $2, NULL, $3, $4, $5, $6, NOW(), NOW(), NULL)
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(account_id)
+    .bind(notice_id)
+    .bind(payload.preferences)
+    .bind(payload.analytics)
+    .bind(payload.marketing)
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(envelope(CookiePreferences {
         analytics: payload.analytics,
         marketing: payload.marketing,
         preferences: payload.preferences,
         updated_at: Utc::now(),
-    }))
+    })))
 }
 
 async fn not_implemented_ack() -> Result<Json<Envelope<Acknowledgement>>, AppError> {

@@ -2,17 +2,31 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: PriceTracker API
-  version: 1.0.0-draft
-  summary: REST API for public price discovery, contributed price submissions, receipt
-    handling, and moderation.
-  description: 'First-cut OpenAPI 3.1 contract for the PriceTracker system.
+  version: 1.1.0-draft
+  summary: REST API for public price discovery, contributed price submissions, multi-attachment purchase evidence, reusable identity/security, and moderation.
+  description: 'Greenfield OpenAPI 3.1 contract for the PriceTracker system.
 
 
-    This spec separates public read endpoints from authenticated write flows and restricted
-    admin moderation flows.
+    This revision extends the original draft with reusable identity and file-management capabilities:
 
-    Sensitive artifacts such as receipts, VAT identifiers, internal source attribution,
-    and moderation notes are intentionally excluded from public DTOs.
+    - multiple email addresses and phone numbers per user
+
+    - password change/reset with server-side history enforcement
+
+    - passkey (WebAuthn) registration and authentication
+
+    - TOTP-based MFA and recovery codes
+
+    - multi-file purchase attachments instead of a single receipt field
+
+    - privacy/legal consent records and cookie preference APIs
+
+    - shop-scoped product codes instead of assuming one global barcode namespace
+
+
+    Sensitive artifacts such as raw receipt files, internal source attribution, moderation notes,
+
+    password hashes, salts, and recovery codes at rest are intentionally excluded from public DTOs.
 
 
     Rust-friendly notes:
@@ -24,6 +38,8 @@ info:
     - Timestamps use `format: date-time` for `chrono::DateTime<Utc>`.
 
     - JSON field names are camelCase to align with `#[serde(rename_all = "camelCase")]`.
+
+    - WebAuthn request/response blobs are modeled as JSON objects to integrate with `webauthn-rs`.
 
     '
 x-rust-backend:
@@ -39,13 +55,18 @@ x-rust-backend:
   - rust_decimal
   - sqlx
   - tracing
+  - argon2
+  - webauthn-rs
+  - totp-rs
+  - tower-cookies
+  - tower-sessions
   notes:
-  - Prefer `rust_decimal::Decimal` over floating point for prices, discounts, and
-    unit prices.
-  - Generate or validate the contract with `utoipa` and keep examples in sync with
-    DTO tests.
-  - Keep request DTOs and public response DTOs separate from internal persistence
-    models.
+  - Hash passwords with Argon2id using a unique random salt per credential version and store password history separately so reuse can be rejected at the API boundary.
+  - Prefer WebAuthn via `webauthn-rs` for passkeys and keep browser-facing ceremony payloads as dedicated DTOs rather than leaking persistence models.
+  - Use `rust_decimal::Decimal` for prices, discounts, and unit prices.
+  - Generate or validate the contract with `utoipa` and keep examples in sync with DTO tests.
+  - Keep request DTOs and public response DTOs separate from internal persistence models.
+  - Model session cookies with `HttpOnly`, `Secure`, `SameSite=Lax` or stricter, and pair cookie-based refresh with CSRF protection.
 servers:
 - url: https://api.example.com/api/v1
   description: Production
@@ -63,13 +84,15 @@ tags:
 - name: Watchlists
 - name: Alerts
 - name: AdminModeration
+- name: Privacy
+- name: IdentitySecurity
 paths:
   /auth/register:
     post:
       tags:
       - Auth
       operationId: register
-      summary: Register a new user account
+      summary: Register a new user account and capture required legal consents
       requestBody:
         required: true
         content:
@@ -82,6 +105,12 @@ paths:
                   email: alex@example.com
                   password: StrongPassword!234
                   displayName: Alex
+                  primaryPhone: '+447700900123'
+                  acceptedLegalDocuments:
+                  - documentKey: terms_of_service
+                    version: '2026-04-01'
+                  - documentKey: privacy_policy
+                    version: '2026-04-01'
       responses:
         '201':
           description: Account created and session issued
@@ -121,6 +150,13 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '202':
+          description: Second factor required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaChallengeEnvelope'
+      description: If MFA is enabled, the server returns a challenge instead of a session.
   /auth/refresh:
     post:
       tags:
@@ -157,7 +193,7 @@ paths:
       tags:
       - Users
       operationId: getMe
-      summary: Get the current authenticated user profile
+      summary: Get the current authenticated user profile including primary contacts and security summary
       security:
       - bearerAuth: []
       responses:
@@ -173,7 +209,7 @@ paths:
       tags:
       - Users
       operationId: updateMe
-      summary: Update the current authenticated user profile
+      summary: Update the current authenticated user profile (display preferences only; use dedicated contact and security endpoints for emails, phones, passkeys, and MFA)
       security:
       - bearerAuth: []
       parameters:
@@ -482,13 +518,8 @@ paths:
       tags:
       - Files
       operationId: createFileUploadIntent
-      summary: Create a signed upload intent for a receipt file
-      description: 'Authenticated users can upload receipt images or PDFs through
-        a signed object-store URL.
-
-        Files remain private and unavailable for public access.
-
-        '
+      summary: Create a signed upload intent for a private file
+      description: Authenticated users upload private files such as purchase receipts or supporting images through signed object-store URLs. Files stay private until explicitly linked to a caller-owned resource and never become public by default.
       security:
       - bearerAuth: []
       parameters:
@@ -502,9 +533,10 @@ paths:
             examples:
               default:
                 value:
-                  filename: receipt.jpg
+                  filename: receipt-page-1.jpg
                   contentType: image/jpeg
                   size: 231231
+                  purpose: purchase_receipt
       responses:
         '201':
           description: Upload intent created
@@ -586,7 +618,7 @@ paths:
       tags:
       - Purchases
       operationId: createPurchase
-      summary: Create a purchase record owned by the current user
+      summary: Create a purchase record owned by the current user with zero or more private attachments
       security:
       - bearerAuth: []
       parameters:
@@ -602,7 +634,10 @@ paths:
                 value:
                   shopId: 33333333-3333-4333-8333-333333333333
                   purchaseTime: '2026-04-02T16:55:00Z'
-                  receiptFileId: 66666666-6666-4666-8666-666666666666
+                  attachmentFileIds:
+                  - 66666666-6666-4666-8666-666666666666
+                  - 77777777-7777-4777-8777-777777777777
+                  notes: Two receipt photos for one shopping trip.
       responses:
         '201':
           description: Purchase created
@@ -677,6 +712,8 @@ paths:
               default:
                 value:
                   purchaseTime: '2026-04-02T17:05:00Z'
+                  attachmentFileIds:
+                  - 66666666-6666-4666-8666-666666666666
       responses:
         '200':
           description: Updated purchase
@@ -714,8 +751,7 @@ paths:
       - Prices
       operationId: createPriceSubmission
       summary: Submit a price record owned by the current user
-      description: 'The server derives submission ownership and internal source attribution
-        from the authenticated session.
+      description: 'The server derives submission ownership and internal source attribution from the authenticated session.
 
         Client applications must not send internal source identifiers.
 
@@ -1121,6 +1157,734 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /auth/password/change:
+    post:
+      tags:
+      - Auth
+      - IdentitySecurity
+      operationId: changePassword
+      summary: Change the current password
+      description: The server enforces password history and unique-salt hashing; clients submit only the cleartext passwords over TLS.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+            examples:
+              default:
+                value:
+                  currentPassword: OldPassword!234
+                  newPassword: NewPassword!234
+      responses:
+        '204':
+          description: Password changed
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /auth/password/forgot:
+    post:
+      tags:
+      - Auth
+      - IdentitySecurity
+      operationId: requestPasswordReset
+      summary: Start the password reset flow
+      description: Always returns an accepted response to avoid revealing whether the email address exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordForgotRequest'
+            examples:
+              default:
+                value:
+                  email: alex@example.com
+      responses:
+        '202':
+          description: Reset flow accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgementEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /auth/password/reset:
+    post:
+      tags:
+      - Auth
+      - IdentitySecurity
+      operationId: resetPassword
+      summary: Complete the password reset flow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+            examples:
+              default:
+                value:
+                  resetToken: reset_tok_abc123
+                  newPassword: FreshPassword!234
+      responses:
+        '204':
+          description: Password reset completed
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /auth/mfa/verify:
+    post:
+      tags:
+      - Auth
+      - IdentitySecurity
+      operationId: verifyMfaChallenge
+      summary: Verify an MFA challenge using TOTP or a recovery code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaVerifyRequest'
+            examples:
+              totp:
+                value:
+                  challengeId: eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee
+                  factorType: totp
+                  code: '483920'
+              recoveryCode:
+                value:
+                  challengeId: eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee
+                  factorType: recovery_code
+                  code: A1C3-E5G7
+      responses:
+        '200':
+          description: Session issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/passkeys/authentication/options:
+    post:
+      tags:
+      - Auth
+      - IdentitySecurity
+      operationId: createPasskeyAuthenticationOptions
+      summary: Create a WebAuthn authentication challenge
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyAuthenticationOptionsRequest'
+            examples:
+              default:
+                value:
+                  email: alex@example.com
+      responses:
+        '200':
+          description: Browser WebAuthn options
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyAuthenticationOptionsEnvelope'
+  /auth/passkeys/authentication/verify:
+    post:
+      tags:
+      - Auth
+      - IdentitySecurity
+      operationId: verifyPasskeyAuthentication
+      summary: Verify a WebAuthn authentication result and issue a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyAuthenticationVerifyRequest'
+      responses:
+        '200':
+          description: Authenticated session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/security:
+    get:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: getOwnSecurityOverview
+      summary: Get current authentication and contact verification status
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Security overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSecuritySummaryEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/passkeys:
+    get:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: listOwnPasskeys
+      summary: List registered passkeys
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Passkey list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/passkeys/registration/options:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: createPasskeyRegistrationOptions
+      summary: Create a WebAuthn registration challenge for the signed-in user
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyRegistrationOptionsRequest'
+            examples:
+              default:
+                value:
+                  displayName: Alex iPhone Face ID
+      responses:
+        '200':
+          description: Browser WebAuthn registration options
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyRegistrationOptionsEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/passkeys/registration/verify:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: verifyPasskeyRegistration
+      summary: Verify a WebAuthn registration result and save the passkey
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyRegistrationVerifyRequest'
+      responses:
+        '201':
+          description: Passkey registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/passkeys/{passkeyId}:
+    delete:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: deleteOwnPasskey
+      summary: Delete one registered passkey
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PasskeyIdPath'
+      responses:
+        '204':
+          description: Passkey deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/mfa/totp/setup:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: createTotpSetup
+      summary: Create a TOTP secret and provisioning payload
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: TOTP setup material
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpSetupEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/mfa/totp/enable:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: enableTotpMfa
+      summary: Verify a TOTP code and enable MFA
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpEnableRequest'
+            examples:
+              default:
+                value:
+                  code: '483920'
+      responses:
+        '200':
+          description: Security updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSecuritySummaryEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/mfa/totp/disable:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: disableTotpMfa
+      summary: Disable TOTP-based MFA
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerificationCodeRequest'
+            examples:
+              default:
+                value:
+                  code: '483920'
+      responses:
+        '200':
+          description: Security updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSecuritySummaryEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/mfa/recovery-codes/rotate:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: rotateRecoveryCodes
+      summary: Invalidate old recovery codes and generate a new set
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: New recovery codes generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodeListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/emails:
+    get:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: listOwnEmails
+      summary: List the caller email addresses
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Email list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailAddressListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: createOwnEmail
+      summary: Add a secondary email address
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailAddressCreateRequest'
+            examples:
+              default:
+                value:
+                  email: alex.backup@example.com
+                  label: backup
+      responses:
+        '201':
+          description: Email added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailAddressEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /me/emails/{emailId}:
+    delete:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: deleteOwnEmail
+      summary: Delete one email address
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/EmailIdPath'
+      responses:
+        '204':
+          description: Email deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/emails/{emailId}/verify:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: verifyOwnEmail
+      summary: Verify one email address
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/EmailIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerificationCodeRequest'
+            examples:
+              default:
+                value:
+                  code: '483920'
+      responses:
+        '200':
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailAddressEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/emails/{emailId}/make-primary:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: makeOwnEmailPrimary
+      summary: Mark one verified email as primary
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/EmailIdPath'
+      responses:
+        '200':
+          description: Primary email updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailAddressEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/phones:
+    get:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: listOwnPhones
+      summary: List the caller phone numbers
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Phone list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: createOwnPhone
+      summary: Add a phone number
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneNumberCreateRequest'
+            examples:
+              default:
+                value:
+                  phoneNumber: '+447700900123'
+                  label: sms_alerts
+      responses:
+        '201':
+          description: Phone added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /me/phones/{phoneId}:
+    delete:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: deleteOwnPhone
+      summary: Delete one phone number
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PhoneIdPath'
+      responses:
+        '204':
+          description: Phone deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/phones/{phoneId}/verify:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: verifyOwnPhone
+      summary: Verify one phone number
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PhoneIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerificationCodeRequest'
+            examples:
+              default:
+                value:
+                  code: '483920'
+      responses:
+        '200':
+          description: Phone verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/phones/{phoneId}/make-primary:
+    post:
+      tags:
+      - Users
+      - IdentitySecurity
+      operationId: makeOwnPhonePrimary
+      summary: Mark one verified phone number as primary
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/PhoneIdPath'
+      responses:
+        '200':
+          description: Primary phone updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /legal/documents:
+    get:
+      tags:
+      - Privacy
+      operationId: listCurrentLegalDocuments
+      summary: List current legal and policy documents with versions
+      responses:
+        '200':
+          description: Legal document list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegalDocumentListEnvelope'
+  /me/privacy-consents:
+    get:
+      tags:
+      - Privacy
+      - Users
+      operationId: listOwnPrivacyConsents
+      summary: List the caller accepted legal document versions
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Consent list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyConsentListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags:
+      - Privacy
+      - Users
+      operationId: acceptCurrentPrivacyDocuments
+      summary: Record acceptance of new legal document versions
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacyConsentCreateRequest'
+            examples:
+              default:
+                value:
+                  documents:
+                  - documentKey: privacy_policy
+                    version: '2026-04-01'
+      responses:
+        '201':
+          description: Consents recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyConsentListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /privacy/cookie-preferences:
+    get:
+      tags:
+      - Privacy
+      operationId: getCookiePreferences
+      summary: Get the current browser cookie preference record
+      responses:
+        '200':
+          description: Cookie preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CookiePreferencesEnvelope'
+    put:
+      tags:
+      - Privacy
+      operationId: updateCookiePreferences
+      summary: Set cookie preferences for the current browser or signed-in user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CookiePreferencesUpdateRequest'
+            examples:
+              default:
+                value:
+                  preferences: true
+                  analytics: false
+                  marketing: false
+      responses:
+        '200':
+          description: Cookie preferences updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CookiePreferencesEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /shops/{shopId}/product-codes/{code}:
+    get:
+      tags:
+      - Shops
+      - Catalog
+      operationId: lookupVariantByShopProductCode
+      summary: Resolve a shop-scoped product code to an item variant
+      description: Use this when a scanned barcode or shelf code is only meaningful within one shop namespace.
+      parameters:
+      - $ref: '#/components/parameters/ShopIdPath'
+      - $ref: '#/components/parameters/CodePath'
+      responses:
+        '200':
+          description: Matched product code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductCodeLookupEnvelope'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     bearerAuth:
@@ -1268,6 +2032,33 @@ components:
       schema:
         type: string
       example: W/"rev-3"
+    EmailIdPath:
+      name: emailId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+    PhoneIdPath:
+      name: phoneId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+    PasskeyIdPath:
+      name: passkeyId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+    CodePath:
+      name: code
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        example: '2380001234567'
   responses:
     ValidationError:
       description: Request validation failed
@@ -1426,6 +2217,7 @@ components:
       - email
       - password
       - displayName
+      - acceptedLegalDocuments
       properties:
         email:
           type: string
@@ -1441,6 +2233,22 @@ components:
           minLength: 2
           maxLength: 80
           example: Alex
+        primaryPhone:
+          type:
+          - string
+          - 'null'
+          pattern: ^\+[1-9]\d{6,14}$
+          example: '+447700900123'
+        acceptedLegalDocuments:
+          type: array
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/LegalDocumentAcceptance'
+          example:
+          - documentKey: terms_of_service
+            version: '2026-04-01'
+          - documentKey: privacy_policy
+            version: '2026-04-01'
     LoginRequest:
       type: object
       additionalProperties: false
@@ -1457,6 +2265,10 @@ components:
           minLength: 1
           maxLength: 128
           example: StrongPassword!234
+        rememberMe:
+          type: boolean
+          default: false
+          example: false
     AuthSession:
       type: object
       additionalProperties: false
@@ -1496,19 +2308,26 @@ components:
       additionalProperties: false
       required:
       - id
-      - email
+      - primaryEmail
       - displayName
       - roles
       - scopes
       - defaultCurrency
       - createdAt
+      - security
       properties:
         id:
           $ref: '#/components/schemas/Identifier'
-        email:
+        primaryEmail:
           type: string
           format: email
           example: alex@example.com
+        primaryPhone:
+          type:
+          - string
+          - 'null'
+          pattern: ^\+[1-9]\d{6,14}$
+          example: '+447700900123'
         displayName:
           type: string
           example: Alex Pricewatch
@@ -1531,6 +2350,16 @@ components:
           - purchase:write_own
         defaultCurrency:
           $ref: '#/components/schemas/CurrencyCode'
+        emailCount:
+          type: integer
+          minimum: 1
+          example: 2
+        phoneCount:
+          type: integer
+          minimum: 0
+          example: 1
+        security:
+          $ref: '#/components/schemas/UserSecuritySummary'
         createdAt:
           type: string
           format: date-time
@@ -1800,12 +2629,16 @@ components:
           $ref: '#/components/schemas/DecimalString'
         unit:
           $ref: '#/components/schemas/UnitRef'
-        sku:
-          type:
-          - string
-          - 'null'
-          maxLength: 64
-          example: '5012345678901'
+        primaryProductCode:
+          anyOf:
+          - $ref: '#/components/schemas/ProductCode'
+          - type: 'null'
+          example:
+            code: '2380001234567'
+            codeType: merchant_barcode
+            scope: shop
+            shopId: 33333333-3333-4333-8333-333333333333
+            label: Tesco in-store barcode
         website:
           type:
           - string
@@ -1833,6 +2666,21 @@ components:
             example:
               amount: '1.60'
               currency: GBP
+          productCodes:
+            type: array
+            items:
+              $ref: '#/components/schemas/ProductCode'
+            example:
+            - code: '2380001234567'
+              codeType: merchant_barcode
+              scope: shop
+              shopId: 33333333-3333-4333-8333-333333333333
+              label: Tesco in-store barcode
+            - code: '5012345678901'
+              codeType: gtin
+              scope: global
+              shopId: null
+              label: Manufacturer barcode
       unevaluatedProperties: false
     VariantSummary:
       type: object
@@ -2172,12 +3020,13 @@ components:
       - filename
       - contentType
       - size
+      - purpose
       properties:
         filename:
           type: string
           minLength: 1
           maxLength: 255
-          example: receipt.jpg
+          example: receipt-page-1.jpg
         contentType:
           type: string
           enum:
@@ -2190,6 +3039,14 @@ components:
           minimum: 1
           maximum: 10485760
           example: 231231
+        purpose:
+          $ref: '#/components/schemas/FilePurpose'
+        checksumSha256:
+          type:
+          - string
+          - 'null'
+          pattern: ^[A-Fa-f0-9]{64}$
+          example: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
     FileUploadIntent:
       type: object
       additionalProperties: false
@@ -2208,6 +3065,12 @@ components:
           type: string
           format: date-time
           example: '2026-04-02T17:30:00Z'
+        requiredHeaders:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            Content-Type: image/jpeg
     FileUploadIntentEnvelope:
       type: object
       additionalProperties: false
@@ -2227,6 +3090,7 @@ components:
       - filename
       - contentType
       - size
+      - purpose
       - status
       - createdAt
       properties:
@@ -2234,13 +3098,15 @@ components:
           $ref: '#/components/schemas/Identifier'
         filename:
           type: string
-          example: receipt.jpg
+          example: receipt-page-1.jpg
         contentType:
           type: string
           example: image/jpeg
         size:
           type: integer
           example: 231231
+        purpose:
+          $ref: '#/components/schemas/FilePurpose'
         status:
           type: string
           enum:
@@ -2251,6 +3117,9 @@ components:
           - rejected
           - deleted
           example: ready
+        metadataStripped:
+          type: boolean
+          example: true
         createdAt:
           type: string
           format: date-time
@@ -2298,7 +3167,6 @@ components:
       required:
       - shopId
       - purchaseTime
-      - receiptFileId
       properties:
         shopId:
           $ref: '#/components/schemas/Identifier'
@@ -2306,8 +3174,20 @@ components:
           type: string
           format: date-time
           example: '2026-04-02T16:55:00Z'
-        receiptFileId:
-          $ref: '#/components/schemas/Identifier'
+        attachmentFileIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/Identifier'
+          maxItems: 10
+          example:
+          - 66666666-6666-4666-8666-666666666666
+          - 77777777-7777-4777-8777-777777777777
+        notes:
+          type:
+          - string
+          - 'null'
+          maxLength: 400
+          example: Two receipt photos for the same shopping trip.
     PurchaseUpdateRequest:
       type: object
       additionalProperties: false
@@ -2316,8 +3196,19 @@ components:
           type: string
           format: date-time
           example: '2026-04-02T17:05:00Z'
-        receiptFileId:
-          $ref: '#/components/schemas/Identifier'
+        attachmentFileIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/Identifier'
+          maxItems: 10
+          example:
+          - 66666666-6666-4666-8666-666666666666
+        notes:
+          type:
+          - string
+          - 'null'
+          maxLength: 400
+          example: Replaced blurry receipt image with clearer copy.
     Purchase:
       type: object
       additionalProperties: false
@@ -2325,7 +3216,7 @@ components:
       - id
       - shopId
       - purchaseTime
-      - receiptFileId
+      - attachments
       - status
       - createdAt
       - updatedAt
@@ -2338,8 +3229,32 @@ components:
           type: string
           format: date-time
           example: '2026-04-02T16:55:00Z'
-        receiptFileId:
-          $ref: '#/components/schemas/Identifier'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileRecord'
+          example:
+          - id: 66666666-6666-4666-8666-666666666666
+            filename: receipt-page-1.jpg
+            contentType: image/jpeg
+            size: 231231
+            purpose: purchase_receipt
+            status: ready
+            metadataStripped: true
+            createdAt: '2026-04-02T16:50:00Z'
+          - id: 77777777-7777-4777-8777-777777777777
+            filename: receipt-page-2.jpg
+            contentType: image/jpeg
+            size: 210998
+            purpose: purchase_receipt
+            status: ready
+            metadataStripped: true
+            createdAt: '2026-04-02T16:51:00Z'
+        notes:
+          type:
+          - string
+          - 'null'
+          example: Weekly supermarket run
         status:
           type: string
           enum:
@@ -2749,3 +3664,885 @@ components:
             $ref: '#/components/schemas/ModerationPriceQueueItem'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
+    Acknowledgement:
+      type: object
+      additionalProperties: false
+      required:
+      - status
+      - message
+      properties:
+        status:
+          type: string
+          enum:
+          - accepted
+          - completed
+          example: accepted
+        message:
+          type: string
+          example: Request accepted.
+    AcknowledgementEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/Acknowledgement'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    UserSecuritySummary:
+      type: object
+      additionalProperties: false
+      required:
+      - passwordLoginEnabled
+      - mfaEnabled
+      - passkeyCount
+      - verifiedEmailCount
+      - verifiedPhoneCount
+      properties:
+        passwordLoginEnabled:
+          type: boolean
+          example: true
+        mfaEnabled:
+          type: boolean
+          example: true
+        passkeyCount:
+          type: integer
+          minimum: 0
+          example: 2
+        verifiedEmailCount:
+          type: integer
+          minimum: 0
+          example: 2
+        verifiedPhoneCount:
+          type: integer
+          minimum: 0
+          example: 1
+        totpEnabled:
+          type: boolean
+          example: true
+        recoveryCodesRemaining:
+          type: integer
+          minimum: 0
+          example: 8
+    UserSecuritySummaryEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/UserSecuritySummary'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    EmailAddress:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - email
+      - label
+      - isPrimary
+      - isVerified
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        email:
+          type: string
+          format: email
+          example: alex@example.com
+        label:
+          type: string
+          enum:
+          - primary
+          - backup
+          - billing
+          - other
+          example: primary
+        isPrimary:
+          type: boolean
+          example: true
+        isVerified:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:00:00Z'
+    EmailAddressListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmailAddress'
+          example:
+          - id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+            email: alex@example.com
+            label: primary
+            isPrimary: true
+            isVerified: true
+            createdAt: '2026-04-02T16:00:00Z'
+          - id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+            email: alex.backup@example.com
+            label: backup
+            isPrimary: false
+            isVerified: false
+            createdAt: '2026-04-02T16:05:00Z'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    EmailAddressEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/EmailAddress'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PhoneNumber:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - phoneNumber
+      - label
+      - isPrimary
+      - isVerified
+      - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        phoneNumber:
+          type: string
+          pattern: ^\+[1-9]\d{6,14}$
+          example: '+447700900123'
+        label:
+          type: string
+          enum:
+          - primary
+          - backup
+          - sms_alerts
+          - other
+          example: primary
+        isPrimary:
+          type: boolean
+          example: true
+        isVerified:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:00:00Z'
+    PhoneNumberListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhoneNumber'
+          example:
+          - id: cccccccc-cccc-4ccc-8ccc-cccccccccccc
+            phoneNumber: '+447700900123'
+            label: primary
+            isPrimary: true
+            isVerified: true
+            createdAt: '2026-04-02T16:00:00Z'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PhoneNumberEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/PhoneNumber'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    LegalDocumentAcceptance:
+      type: object
+      additionalProperties: false
+      required:
+      - documentKey
+      - version
+      properties:
+        documentKey:
+          type: string
+          enum:
+          - terms_of_service
+          - privacy_policy
+          example: privacy_policy
+        version:
+          type: string
+          example: '2026-04-01'
+    EmailAddressCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - label
+      properties:
+        email:
+          type: string
+          format: email
+          example: alex.backup@example.com
+        label:
+          type: string
+          enum:
+          - backup
+          - billing
+          - other
+          example: backup
+    PhoneNumberCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - phoneNumber
+      - label
+      properties:
+        phoneNumber:
+          type: string
+          pattern: ^\+[1-9]\d{6,14}$
+          example: '+447700900123'
+        label:
+          type: string
+          enum:
+          - primary
+          - backup
+          - sms_alerts
+          - other
+          example: sms_alerts
+    VerificationCodeRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          minLength: 4
+          maxLength: 16
+          example: '483920'
+    LegalDocument:
+      type: object
+      additionalProperties: false
+      required:
+      - documentKey
+      - title
+      - version
+      - effectiveAt
+      - url
+      properties:
+        documentKey:
+          type: string
+          enum:
+          - terms_of_service
+          - privacy_policy
+          - cookie_policy
+          example: privacy_policy
+        title:
+          type: string
+          example: Privacy Policy
+        version:
+          type: string
+          example: '2026-04-01'
+        effectiveAt:
+          type: string
+          format: date-time
+          example: '2026-04-01T00:00:00Z'
+        url:
+          type: string
+          format: uri
+          example: https://example.com/legal/privacy-policy-2026-04-01
+    LegalDocumentListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LegalDocument'
+          example:
+          - documentKey: terms_of_service
+            title: Terms of Service
+            version: '2026-04-01'
+            effectiveAt: '2026-04-01T00:00:00Z'
+            url: https://example.com/legal/terms-of-service-2026-04-01
+          - documentKey: privacy_policy
+            title: Privacy Policy
+            version: '2026-04-01'
+            effectiveAt: '2026-04-01T00:00:00Z'
+            url: https://example.com/legal/privacy-policy-2026-04-01
+          - documentKey: cookie_policy
+            title: Cookie Policy
+            version: '2026-04-01'
+            effectiveAt: '2026-04-01T00:00:00Z'
+            url: https://example.com/legal/cookie-policy-2026-04-01
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PrivacyConsent:
+      type: object
+      additionalProperties: false
+      required:
+      - documentKey
+      - version
+      - acceptedAt
+      properties:
+        documentKey:
+          type: string
+          enum:
+          - terms_of_service
+          - privacy_policy
+          example: privacy_policy
+        version:
+          type: string
+          example: '2026-04-01'
+        acceptedAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:00:00Z'
+        source:
+          type: string
+          enum:
+          - registration
+          - settings_update
+          - admin_import
+          example: registration
+    PrivacyConsentCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - documents
+      properties:
+        documents:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/LegalDocumentAcceptance'
+    PrivacyConsentListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PrivacyConsent'
+          example:
+          - documentKey: terms_of_service
+            version: '2026-04-01'
+            acceptedAt: '2026-04-02T16:00:00Z'
+            source: registration
+          - documentKey: privacy_policy
+            version: '2026-04-01'
+            acceptedAt: '2026-04-02T16:00:00Z'
+            source: registration
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    CookiePreferences:
+      type: object
+      additionalProperties: false
+      required:
+      - necessary
+      - preferences
+      - analytics
+      - marketing
+      - updatedAt
+      properties:
+        necessary:
+          type: boolean
+          const: true
+          example: true
+        preferences:
+          type: boolean
+          example: true
+        analytics:
+          type: boolean
+          example: false
+        marketing:
+          type: boolean
+          example: false
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:10:00Z'
+    CookiePreferencesUpdateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - preferences
+      - analytics
+      - marketing
+      properties:
+        preferences:
+          type: boolean
+          example: true
+        analytics:
+          type: boolean
+          example: false
+        marketing:
+          type: boolean
+          example: false
+    CookiePreferencesEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/CookiePreferences'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PasswordChangeRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - currentPassword
+      - newPassword
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+          maxLength: 128
+          example: OldPassword!234
+        newPassword:
+          type: string
+          minLength: 12
+          maxLength: 128
+          example: NewPassword!234
+      description: The server hashes the new password with a unique salt and rejects passwords that violate the configured history window.
+    PasswordForgotRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      properties:
+        email:
+          type: string
+          format: email
+          example: alex@example.com
+    PasswordResetRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - resetToken
+      - newPassword
+      properties:
+        resetToken:
+          type: string
+          minLength: 20
+          maxLength: 512
+          example: reset_tok_abc123
+        newPassword:
+          type: string
+          minLength: 12
+          maxLength: 128
+          example: FreshPassword!234
+      description: The server applies the same password history and salt rules used by password change.
+    MfaChallenge:
+      type: object
+      additionalProperties: false
+      required:
+      - challengeId
+      - availableFactors
+      - expiresAt
+      properties:
+        challengeId:
+          $ref: '#/components/schemas/Identifier'
+        availableFactors:
+          type: array
+          items:
+            type: string
+            enum:
+            - totp
+            - recovery_code
+            - passkey
+          example:
+          - totp
+          - recovery_code
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:20:00Z'
+    MfaChallengeEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/MfaChallenge'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    MfaVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - challengeId
+      - factorType
+      properties:
+        challengeId:
+          $ref: '#/components/schemas/Identifier'
+        factorType:
+          type: string
+          enum:
+          - totp
+          - recovery_code
+          example: totp
+        code:
+          type: string
+          minLength: 6
+          maxLength: 64
+          example: '483920'
+    RecoveryCodeList:
+      type: object
+      additionalProperties: false
+      required:
+      - codes
+      properties:
+        codes:
+          type: array
+          minItems: 8
+          maxItems: 12
+          items:
+            type: string
+            example: A1C3-E5G7
+          example:
+          - A1C3-E5G7
+          - H8J2-K4L6
+          - M1N3-P5R7
+          - S8T2-V4W6
+          - X1Y3-Z5A7
+          - B8C2-D4E6
+          - F1G3-H5J7
+          - K8L2-M4N6
+      description: Recovery codes are only shown at generation time. The server stores only salted hashes of the codes.
+    RecoveryCodeListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/RecoveryCodeList'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    TotpSetup:
+      type: object
+      additionalProperties: false
+      required:
+      - secret
+      - otpauthUri
+      - qrCodeSvgDataUrl
+      properties:
+        secret:
+          type: string
+          example: JBSWY3DPEHPK3PXP
+        otpauthUri:
+          type: string
+          example: otpauth://totp/PriceTracker:alex@example.com?secret=JBSWY3DPEHPK3PXP&issuer=PriceTracker
+        qrCodeSvgDataUrl:
+          type: string
+          example: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0c...
+    TotpSetupEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/TotpSetup'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    TotpEnableRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+          example: '483920'
+    Passkey:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - displayName
+      - createdAt
+      - lastUsedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        displayName:
+          type: string
+          example: Alex MacBook Touch ID
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-04-02T16:00:00Z'
+        lastUsedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          example: '2026-04-03T08:20:00Z'
+    PasskeyEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/Passkey'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PasskeyListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Passkey'
+          example:
+          - id: dddddddd-dddd-4ddd-8ddd-dddddddddddd
+            displayName: Alex MacBook Touch ID
+            createdAt: '2026-04-02T16:00:00Z'
+            lastUsedAt: '2026-04-03T08:20:00Z'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PasskeyRegistrationOptionsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          example: Alex iPhone Face ID
+    WebAuthnPublicKeyOptions:
+      type: object
+      description: Opaque WebAuthn ceremony payload passed through to the browser and back. Concrete structure is defined by the WebAuthn standard and browser APIs.
+      additionalProperties: true
+      example:
+        challenge: ZXhhbXBsZS1jaGFsbGVuZ2U
+        rp:
+          name: PriceTracker
+        user:
+          id: dXNlcl8x
+          name: alex@example.com
+          displayName: Alex
+        pubKeyCredParams:
+        - alg: -7
+          type: public-key
+    PasskeyRegistrationOptions:
+      type: object
+      additionalProperties: false
+      required:
+      - registrationId
+      - publicKey
+      properties:
+        registrationId:
+          $ref: '#/components/schemas/Identifier'
+        publicKey:
+          $ref: '#/components/schemas/WebAuthnPublicKeyOptions'
+    PasskeyRegistrationOptionsEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/PasskeyRegistrationOptions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PasskeyRegistrationVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - registrationId
+      - credential
+      properties:
+        registrationId:
+          $ref: '#/components/schemas/Identifier'
+        credential:
+          type: object
+          additionalProperties: true
+          example:
+            id: credential-id
+            rawId: credential-id
+            response:
+              clientDataJSON: '...'
+              attestationObject: '...'
+            type: public-key
+    PasskeyAuthenticationOptionsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type:
+          - string
+          - 'null'
+          format: email
+          example: alex@example.com
+    PasskeyAuthenticationOptions:
+      type: object
+      additionalProperties: false
+      required:
+      - authenticationId
+      - publicKey
+      properties:
+        authenticationId:
+          $ref: '#/components/schemas/Identifier'
+        publicKey:
+          $ref: '#/components/schemas/WebAuthnPublicKeyOptions'
+    PasskeyAuthenticationOptionsEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/PasskeyAuthenticationOptions'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    PasskeyAuthenticationVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - authenticationId
+      - credential
+      properties:
+        authenticationId:
+          $ref: '#/components/schemas/Identifier'
+        credential:
+          type: object
+          additionalProperties: true
+          example:
+            id: credential-id
+            rawId: credential-id
+            response:
+              clientDataJSON: '...'
+              authenticatorData: '...'
+              signature: '...'
+              userHandle: '...'
+            type: public-key
+    ProductCode:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - codeType
+      - scope
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: '2380001234567'
+        codeType:
+          type: string
+          enum:
+          - merchant_barcode
+          - gtin
+          - plu
+          - internal_shelf_code
+          example: merchant_barcode
+        scope:
+          type: string
+          enum:
+          - shop
+          - global
+          example: shop
+        shopId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          example: 33333333-3333-4333-8333-333333333333
+        label:
+          type:
+          - string
+          - 'null'
+          example: Tesco in-store barcode
+      description: A product code may be scoped to a specific shop rather than globally valid.
+    ProductCodeMatch:
+      type: object
+      additionalProperties: false
+      required:
+      - shopId
+      - code
+      - matchType
+      - itemVariant
+      properties:
+        shopId:
+          $ref: '#/components/schemas/Identifier'
+        code:
+          type: string
+          example: '2380001234567'
+        matchType:
+          type: string
+          enum:
+          - exact
+          - alias
+          - ambiguous
+          example: exact
+        itemVariant:
+          $ref: '#/components/schemas/ItemVariantDetail'
+    ProductCodeLookupEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/ProductCodeMatch'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    FilePurpose:
+      type: string
+      enum:
+      - purchase_receipt
+      - purchase_supporting_image
+      - user_avatar
+      - moderation_evidence
+      - other_private
+      example: purchase_receipt
+x-greenfield-notes:
+- No migration compatibility layer is required because implementation has not started.
+- 'The contract favors the cleaner shape: primary and secondary contact resources, attachment arrays, and shop-scoped product codes.'

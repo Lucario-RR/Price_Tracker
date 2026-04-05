@@ -10,3 +10,6 @@
 
 # Common logs and local temp output
 *.log
+
+# Ignore local config which contains pwd
+/backend/.env

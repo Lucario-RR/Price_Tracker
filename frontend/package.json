@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:debug": "vite build --mode debug",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@zxing/browser": "^0.1.5",
     "vue": "^3.5.13"
   },
   "devDependencies": {

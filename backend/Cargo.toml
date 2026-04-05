@@ -13,6 +13,7 @@ hyper = { version = "1.5.0", features = ["full"] }
 rust_decimal = { version = "1.35.0", features = ["serde-with-str"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 sqlx = { version = "0.7.4", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "rust_decimal"] }
 tokio = { version = "1.42.0", features = ["full"] }
 tower = "0.5"

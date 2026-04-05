@@ -70,7 +70,7 @@ x-rust-backend:
 servers:
 - url: https://api.example.com/api/v1
   description: Production
-- url: http://localhost:3000/api/v1
+- url: http://localhost:11451/api/v1
   description: Local development
 tags:
 - name: Auth
@@ -84,6 +84,7 @@ tags:
 - name: Watchlists
 - name: Alerts
 - name: AdminModeration
+- name: AdminConfig
 - name: Privacy
 - name: IdentitySecurity
 paths:
@@ -120,6 +121,32 @@ paths:
                 $ref: '#/components/schemas/AuthSessionEnvelope'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /auth/register-admin:
+    post:
+      tags:
+      - Auth
+      operationId: registerAdminBootstrap
+      summary: Temporarily register an admin account without a prior login
+      description: Setup-only bootstrap route. Keep it behind an application flag and remove it before a stricter production release.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Admin account created and session issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
   /auth/login:
@@ -162,13 +189,13 @@ paths:
       tags:
       - Auth
       operationId: refreshSession
-      summary: Refresh an access token using the refresh cookie
+      summary: Refresh an access token using the current authenticated session
       security:
       - refreshTokenCookie: []
         csrfHeader: []
       responses:
         '200':
-          description: Access token refreshed
+          description: Access token refreshed and session cookie renewed
           content:
             application/json:
               schema:
@@ -180,20 +207,21 @@ paths:
       tags:
       - Auth
       operationId: logout
-      summary: Invalidate the current session
+      summary: Invalidate the current session and expire the session cookie
       security:
       - bearerAuth: []
       - refreshTokenCookie: []
         csrfHeader: []
       responses:
         '204':
-          description: Session invalidated
+          description: Session invalidated and session cookie expired
   /me:
     get:
       tags:
       - Users
       operationId: getMe
       summary: Get the current authenticated user profile including primary contacts and security summary
+      description: If the client sends `x-account-id`, it must match the active authenticated session.
       security:
       - bearerAuth: []
       responses:
@@ -209,7 +237,7 @@ paths:
       tags:
       - Users
       operationId: updateMe
-      summary: Update the current authenticated user profile (display preferences only; use dedicated contact and security endpoints for emails, phones, passkeys, and MFA)
+      summary: Update the current authenticated user profile and presentation preferences
       security:
       - bearerAuth: []
       parameters:
@@ -225,6 +253,9 @@ paths:
                 value:
                   displayName: Alex Pricewatch
                   defaultCurrency: GBP
+                  locale: en-GB
+                  timezoneName: Europe/London
+                  profileBio: Track everyday prices and save evidence quickly.
       responses:
         '200':
           description: Updated profile
@@ -238,6 +269,47 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+  /me/avatar:
+    post:
+      tags:
+      - Users
+      operationId: updateMeAvatar
+      summary: Attach one of the caller-owned uploaded files as the active avatar
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvatarUpdateRequest'
+      responses:
+        '200':
+          description: Updated profile with avatar attachment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags:
+      - Users
+      operationId: deleteMeAvatar
+      summary: Remove the active avatar attachment from the current profile
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Updated profile without an avatar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /categories:
     get:
       tags:
@@ -1157,6 +1229,366 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /admin/overview:
+    get:
+      tags:
+      - AdminConfig
+      operationId: getAdminOverview
+      summary: Load summary counts and capability flags for the admin dashboard
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Admin overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOverviewEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /admin/users:
+    get:
+      tags:
+      - AdminConfig
+      operationId: listAdminUsers
+      summary: List users that admins can review and operate on
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Admin user directory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserSummaryListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags:
+      - AdminConfig
+      operationId: createAdminUser
+      summary: Create a user or admin account from the admin console
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserCreateRequest'
+      responses:
+        '201':
+          description: Created account summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserSummaryEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /admin/users/{accountId}:
+    patch:
+      tags:
+      - AdminConfig
+      operationId: updateAdminUser
+      summary: Update one user from the admin management workspace
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: accountId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Identifier'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpdateRequest'
+      responses:
+        '200':
+          description: Updated account summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserSummaryEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/users/bulk-actions:
+    post:
+      tags:
+      - AdminConfig
+      operationId: bulkUpdateAdminUsers
+      summary: Apply a bulk user action such as freeze, activate, restore, delete, or set-status
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserBulkActionRequest'
+      responses:
+        '200':
+          description: Bulk action acknowledgement
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgementEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /admin/settings:
+    get:
+      tags:
+      - AdminConfig
+      operationId: listAdminSettings
+      summary: List persisted system settings exposed in the admin dashboard
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: System settings list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSystemSettingListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /admin/settings/{settingKey}:
+    patch:
+      tags:
+      - AdminConfig
+      operationId: updateAdminSetting
+      summary: Update one persisted system setting
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: settingKey
+        in: path
+        required: true
+        schema:
+          type: string
+        example: system.maintenanceMode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSystemSettingUpdateRequest'
+      responses:
+        '200':
+          description: Updated system setting
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminSystemSettingEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/database/tables/{tableId}:
+    get:
+      tags:
+      - AdminConfig
+      operationId: getAdminDatabaseTableRows
+      summary: Load one curated admin table with rows, field descriptions, and lookup metadata
+      description: The publish admin portal uses this payload to render searchable foreign-key selectors, helper text, and the current row set for one module.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: tableId
+        in: path
+        required: true
+        schema:
+          type: string
+        example: units
+      responses:
+        '200':
+          description: Table definition, current rows, and any lookup data needed by the editor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTableRowsEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags:
+      - AdminConfig
+      operationId: createAdminDatabaseRecord
+      summary: Create one curated admin table record
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: tableId
+        in: path
+        required: true
+        schema:
+          type: string
+        example: units
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminRecordUpsertRequest'
+      responses:
+        '201':
+          description: Created admin table record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDatabaseRecordEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /admin/database/tables/{tableId}/{recordId}:
+    patch:
+      tags:
+      - AdminConfig
+      operationId: updateAdminDatabaseRecord
+      summary: Update one curated admin table record
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: tableId
+        in: path
+        required: true
+        schema:
+          type: string
+        example: items
+      - name: recordId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Identifier'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminRecordUpsertRequest'
+      responses:
+        '200':
+          description: Updated admin table record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDatabaseRecordEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags:
+      - AdminConfig
+      operationId: deleteAdminDatabaseRecord
+      summary: Archive or delete one curated admin table record
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: tableId
+        in: path
+        required: true
+        schema:
+          type: string
+        example: categories
+      - name: recordId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Identifier'
+      responses:
+        '200':
+          description: Admin table record removal acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgementEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/database/tables/{tableId}/{recordId}/approve:
+    post:
+      tags:
+      - AdminConfig
+      operationId: approveAdminDatabaseRecord
+      summary: Approve one curated admin table record
+      description: Only approval-aware modules expose this action; at the moment that includes catalog items and item variants.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: tableId
+        in: path
+        required: true
+        schema:
+          type: string
+        example: items
+      - name: recordId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Identifier'
+      responses:
+        '200':
+          description: Admin table record approval acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgementEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /auth/password/change:
     post:
       tags:
@@ -1179,8 +1611,12 @@ paths:
                   currentPassword: OldPassword!234
                   newPassword: NewPassword!234
       responses:
-        '204':
+        '200':
           description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgementEnvelope'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -1577,6 +2013,7 @@ paths:
       - IdentitySecurity
       operationId: deleteOwnEmail
       summary: Delete one email address
+      description: Secondary emails can be removed by the owning user. The current primary email must be replaced before it can be removed.
       security:
       - bearerAuth: []
       parameters:
@@ -1584,6 +2021,8 @@ paths:
       responses:
         '204':
           description: Email deleted
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2308,16 +2747,22 @@ components:
       additionalProperties: false
       required:
       - id
+      - status
       - primaryEmail
       - displayName
       - roles
       - scopes
       - defaultCurrency
+      - locale
+      - timezoneName
       - createdAt
       - security
       properties:
         id:
           $ref: '#/components/schemas/Identifier'
+        status:
+          type: string
+          example: active
         primaryEmail:
           type: string
           format: email
@@ -2350,6 +2795,28 @@ components:
           - purchase:write_own
         defaultCurrency:
           $ref: '#/components/schemas/CurrencyCode'
+        locale:
+          type: string
+          example: en-GB
+        timezoneName:
+          type: string
+          example: Europe/London
+        profileBio:
+          type:
+          - string
+          - 'null'
+          example: Track everyday prices and save evidence quickly.
+        avatarFileId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          example: null
+        avatarFilename:
+          type:
+          - string
+          - 'null'
+          example: avatar.png
         emailCount:
           type: integer
           minimum: 1
@@ -2386,6 +2853,25 @@ components:
           example: Alex Pricewatch
         defaultCurrency:
           $ref: '#/components/schemas/CurrencyCode'
+        locale:
+          type: string
+          example: en-GB
+        timezoneName:
+          type: string
+          example: Europe/London
+        profileBio:
+          type:
+          - string
+          - 'null'
+          example: Track everyday prices and save evidence quickly.
+    AvatarUpdateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - fileId
+      properties:
+        fileId:
+          $ref: '#/components/schemas/Identifier'
     Category:
       type: object
       additionalProperties: false
@@ -3664,22 +4150,600 @@ components:
             $ref: '#/components/schemas/ModerationPriceQueueItem'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
+    AdminTableColumn:
+      type: object
+      additionalProperties: false
+      required:
+      - key
+      - label
+      - input
+      - required
+      - mutable
+      properties:
+        key:
+          type: string
+          example: name
+        label:
+          type: string
+          example: Name
+        input:
+          type: string
+          example: text
+        required:
+          type: boolean
+          example: true
+        mutable:
+          type: boolean
+          example: true
+        description:
+          type:
+          - string
+          - 'null'
+          example: Required. Use the public category name shown to users.
+        lookupKey:
+          type:
+          - string
+          - 'null'
+          example: categories
+    AdminTableDefinition:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - label
+      - description
+      - supportsCreate
+      - supportsApproval
+      - columns
+      properties:
+        id:
+          type: string
+          example: categories
+        label:
+          type: string
+          example: Categories
+        description:
+          type: string
+          example: Manage the product categories shown across the catalog.
+        supportsCreate:
+          type: boolean
+          example: true
+        supportsApproval:
+          type: boolean
+          example: false
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminTableColumn'
+    AdminOverview:
+      type: object
+      additionalProperties: false
+      required:
+      - accountCount
+      - categoryCount
+      - brandCount
+      - unitCount
+      - retailerCount
+      - shopCount
+      - itemCount
+      - itemVariantCount
+      - discountTypeCount
+      - pendingModerationCount
+      - systemSettingCount
+      - publicAdminBootstrapEnabled
+      - tables
+      properties:
+        accountCount:
+          type: integer
+          example: 2
+        categoryCount:
+          type: integer
+          example: 14
+        brandCount:
+          type: integer
+          example: 21
+        unitCount:
+          type: integer
+          example: 18
+        retailerCount:
+          type: integer
+          example: 7
+        shopCount:
+          type: integer
+          example: 1
+        itemCount:
+          type: integer
+          example: 1
+        itemVariantCount:
+          type: integer
+          format: int64
+          example: 4
+        discountTypeCount:
+          type: integer
+          example: 6
+        pendingModerationCount:
+          type: integer
+          example: 0
+        systemSettingCount:
+          type: integer
+          example: 4
+        publicAdminBootstrapEnabled:
+          type: boolean
+          example: true
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminTableDefinition'
+    AdminOverviewEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/AdminOverview'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AdminLookupOption:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - label
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        label:
+          type: string
+          example: Kilogram
+        detail:
+          type:
+          - string
+          - 'null'
+          example: kg
+    AdminTableLookupMap:
+      type: object
+      description: Map of column key to selectable lookup options used by searchable admin form controls.
+      additionalProperties:
+        type: array
+        items:
+          $ref: '#/components/schemas/AdminLookupOption'
+      example:
+        categoryId:
+        - id: c1111111-1111-4111-8111-111111111111
+          label: Dairy
+          detail: null
+    AdminDatabaseRecord:
+      type: object
+      description: Flexible admin row payload. Field keys depend on the selected table definition.
+      additionalProperties: true
+      example:
+        id: 11111111-1111-4111-8111-111111111111
+        name: Milk
+        status: approved
+    AdminTableRows:
+      type: object
+      additionalProperties: false
+      required:
+      - table
+      - rows
+      - lookups
+      properties:
+        table:
+          $ref: '#/components/schemas/AdminTableDefinition'
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminDatabaseRecord'
+        lookups:
+          $ref: '#/components/schemas/AdminTableLookupMap'
+    AdminTableRowsEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/AdminTableRows'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AdminDatabaseRecordEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/AdminDatabaseRecord'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AdminUserSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - status
+      - displayName
+      - primaryEmail
+      - roles
+      - scopes
+      - locale
+      - timezoneName
+      - defaultCurrency
+      - emailCount
+      - phoneCount
+      - createdAt
+      - security
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        status:
+          type: string
+          enum:
+          - active
+          - review
+          - suspended
+          - disabled
+          - deleted
+          example: active
+        displayName:
+          type: string
+          example: Alex Pricewatch
+        primaryEmail:
+          type: string
+          format: email
+          example: alex@example.com
+        primaryPhone:
+          type:
+          - string
+          - 'null'
+          pattern: ^\+[1-9]\d{6,14}$
+          example: '+447700900123'
+        roles:
+          type: array
+          items:
+            type: string
+            enum:
+            - user
+            - admin
+          example:
+          - user
+        scopes:
+          type: array
+          items:
+            type: string
+          example:
+          - purchase:read_own
+          - price:write_own
+        locale:
+          type: string
+          example: en-GB
+        timezoneName:
+          type: string
+          example: Europe/London
+        defaultCurrency:
+          $ref: '#/components/schemas/CurrencyCode'
+        emailCount:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 2
+        phoneCount:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 1
+        avatarFileId:
+          anyOf:
+          - $ref: '#/components/schemas/Identifier'
+          - type: 'null'
+        avatarFilename:
+          type:
+          - string
+          - 'null'
+          example: avatar-2026-04.png
+        profileBio:
+          type:
+          - string
+          - 'null'
+          example: Admin account for catalog operations.
+        createdAt:
+          type: string
+          format: date-time
+        lastActiveAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        deletedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        suspendedUntil:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        security:
+          $ref: '#/components/schemas/UserSecuritySummary'
+    AdminUserSummaryEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/AdminUserSummary'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AdminUserSummaryListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserSummary'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AdminUserCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - password
+      - displayName
+      properties:
+        email:
+          type: string
+          format: email
+          example: new.user@example.com
+        password:
+          type: string
+          minLength: 12
+          maxLength: 128
+          example: StrongPassword!234
+        displayName:
+          type: string
+          minLength: 2
+          maxLength: 80
+          example: New User
+        primaryPhone:
+          type:
+          - string
+          - 'null'
+          pattern: ^\+[1-9]\d{6,14}$
+          example: '+447700900123'
+        roleCodes:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+            enum:
+            - user
+            - admin
+          example:
+          - user
+        accountStatus:
+          type:
+          - string
+          - 'null'
+          enum:
+          - active
+          - review
+          - suspended
+          - disabled
+          example: review
+    AdminUserUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName:
+          type:
+          - string
+          - 'null'
+          minLength: 2
+          maxLength: 80
+          example: Updated User
+        primaryEmail:
+          type:
+          - string
+          - 'null'
+          format: email
+          example: updated.user@example.com
+        primaryPhone:
+          type:
+          - string
+          - 'null'
+          pattern: ^\+[1-9]\d{6,14}$
+          example: '+447700900124'
+        roleCodes:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+            enum:
+            - user
+            - admin
+          example:
+          - user
+          - admin
+        accountStatus:
+          type:
+          - string
+          - 'null'
+          enum:
+          - active
+          - review
+          - suspended
+          - disabled
+          - deleted
+          example: active
+        defaultCurrency:
+          anyOf:
+          - $ref: '#/components/schemas/CurrencyCode'
+          - type: 'null'
+        locale:
+          type:
+          - string
+          - 'null'
+          example: en-GB
+        timezoneName:
+          type:
+          - string
+          - 'null'
+          example: Europe/London
+        profileBio:
+          type:
+          - string
+          - 'null'
+          maxLength: 1000
+          example: Updated by an administrator.
+    AdminUserBulkActionRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - accountIds
+      - action
+      properties:
+        accountIds:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Identifier'
+        action:
+          type: string
+          enum:
+          - freeze
+          - activate
+          - delete
+          - restore
+          - set-status
+          example: freeze
+        status:
+          type:
+          - string
+          - 'null'
+          enum:
+          - active
+          - review
+          - suspended
+          - disabled
+          - deleted
+          example: suspended
+        reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 500
+          example: Flagged during support review.
+    AdminSystemSetting:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - key
+      - scope
+      - valueType
+      - isSensitive
+      - value
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        key:
+          type: string
+          example: system.maintenanceMode
+        scope:
+          type: string
+          example: SYSTEM
+        valueType:
+          type: string
+          example: boolean
+        description:
+          type:
+          - string
+          - 'null'
+        isSensitive:
+          type: boolean
+          example: false
+        defaultValue:
+          description: Default JSON-compatible value for the setting.
+        value:
+          description: Current JSON-compatible value for the setting.
+        updatedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        updatedByAccountId:
+          anyOf:
+          - $ref: '#/components/schemas/Identifier'
+          - type: 'null'
+    AdminSystemSettingEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/AdminSystemSetting'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AdminSystemSettingListEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - data
+      - meta
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminSystemSetting'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AdminSystemSettingUpdateRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - value
+      properties:
+        value:
+          description: JSON-compatible setting value. Use null to reset to the default value.
+    AdminRecordUpsertRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - values
+      properties:
+        values:
+          type: object
+          description: Field map for the selected curated admin table. Primary IDs are generated server-side for create flows.
+          additionalProperties: true
+          example:
+            name: Kilogram
+            code: kg
+            isBaseUnit: true
     Acknowledgement:
       type: object
       additionalProperties: false
       required:
       - status
-      - message
       properties:
         status:
           type: string
-          enum:
-          - accepted
-          - completed
-          example: accepted
-        message:
-          type: string
-          example: Request accepted.
+          example: password-updated
     AcknowledgementEnvelope:
       type: object
       additionalProperties: false
@@ -3695,13 +4759,11 @@ components:
       type: object
       additionalProperties: false
       required:
-      - passwordLoginEnabled
+      - passwordSet
       - mfaEnabled
       - passkeyCount
-      - verifiedEmailCount
-      - verifiedPhoneCount
       properties:
-        passwordLoginEnabled:
+        passwordSet:
           type: boolean
           example: true
         mfaEnabled:
@@ -3709,23 +4771,9 @@ components:
           example: true
         passkeyCount:
           type: integer
+          format: int64
           minimum: 0
           example: 2
-        verifiedEmailCount:
-          type: integer
-          minimum: 0
-          example: 2
-        verifiedPhoneCount:
-          type: integer
-          minimum: 0
-          example: 1
-        totpEnabled:
-          type: boolean
-          example: true
-        recoveryCodesRemaining:
-          type: integer
-          minimum: 0
-          example: 8
     UserSecuritySummaryEnvelope:
       type: object
       additionalProperties: false

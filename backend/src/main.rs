@@ -11,6 +11,58 @@ use std::{fs, path::Path};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+async fn table_exists(pool: &sqlx::PgPool, table_name: &str) -> anyhow::Result<bool> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = $1
+        )
+        "#,
+    )
+    .bind(table_name)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("failed checking whether table {table_name} exists"))?;
+
+    Ok(exists)
+}
+
+async fn column_exists(
+    pool: &sqlx::PgPool,
+    table_name: &str,
+    column_name: &str,
+) -> anyhow::Result<bool> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = $1
+              AND column_name = $2
+        )
+        "#,
+    )
+    .bind(table_name)
+    .bind(column_name)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("failed checking whether column {table_name}.{column_name} exists"))?;
+
+    Ok(exists)
+}
+
+async fn has_v2_schema(pool: &sqlx::PgPool) -> anyhow::Result<bool> {
+    let has_privacy_notice_version = table_exists(pool, "privacy_notice_version").await?;
+    let has_v2_phone_column = column_exists(pool, "account_phone", "e164_phone_number").await?;
+    let has_v2_price_column =
+        column_exists(pool, "price_observation", "final_price_amount").await?;
+
+    Ok(has_privacy_notice_version && has_v2_phone_column && has_v2_price_column)
+}
+
 async fn applied_v2_migrations(pool: &sqlx::PgPool) -> anyhow::Result<Vec<String>> {
     let filenames = sqlx::query_scalar::<_, String>(
         r#"
@@ -75,6 +127,27 @@ async fn run_sql_migrations(pool: &sqlx::PgPool) -> anyhow::Result<()> {
             continue;
         }
 
+        if file_name == "pricetracker_schema_v2.sql" {
+            if has_v2_schema(pool).await? {
+                sqlx::query("INSERT INTO _app_sql_migrations (filename) VALUES ($1)")
+                    .bind(&file_name)
+                    .execute(pool)
+                    .await
+                    .with_context(|| {
+                        format!("failed to register existing migration {file_name}")
+                    })?;
+
+                tracing::info!("registered existing v2 schema as applied: {}", file_name);
+                continue;
+            }
+
+            if table_exists(pool, "account").await? {
+                return Err(anyhow::anyhow!(
+                    "database already contains existing tables, but not the expected v2 schema. Use a fresh database or drop the existing public schema before applying pricetracker_schema_v2.sql"
+                ));
+            }
+        }
+
         let sql = fs::read_to_string(&path)
             .with_context(|| format!("failed to read migration {}", path.display()))?;
 
@@ -123,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
         }
     );
 
-    let state = state::AppState::new(pool);
+    let state = state::AppState::new(pool, config.allow_public_admin_bootstrap);
     let app = app::build_router(state, &config.app_cors_origin);
     let listener = TcpListener::bind((config.app_host.as_str(), config.app_port))
         .await

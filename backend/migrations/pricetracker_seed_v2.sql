@@ -11,7 +11,7 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO address (
     id, country_code, building_number, street_name, street_line2, unit, floor, building_name,
-    district, city, state_region, postal_code, latitude, longitude, formatted_address, created_at, updated_at
+    district, city, state_region, postal_code, latitude, longitude, full_text, created_at, updated_at
 ) VALUES (
     'a1111111-1111-4111-8111-111111111111', 'GB', '12', 'High Street', NULL, NULL, NULL, NULL,
     NULL, 'Bristol', 'England', 'BS1 1AA', NULL, NULL, '12 High Street, Bristol BS1 1AA, UK', NOW(), NOW()
@@ -25,20 +25,20 @@ INSERT INTO brand (id, name, normalized_name, country_code, website_url, headqua
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO unit_family (id, code, name, created_at) VALUES
-('uf111111-1111-4111-8111-111111111111', 'volume', 'Volume', NOW())
+('aa111111-1111-4111-8111-111111111111', 'volume', 'Volume', NOW())
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO unit (id, unit_family_id, code, name, symbol, factor_to_base, is_base_unit, created_at) VALUES
-('u1111111-1111-4111-8111-111111111111', 'uf111111-1111-4111-8111-111111111111', 'l', 'Litre', 'L', 1.00000000, TRUE, NOW()),
-('u2222222-2222-4222-8222-222222222222', 'uf111111-1111-4111-8111-111111111111', 'ml', 'Millilitre', 'mL', 0.00100000, FALSE, NOW())
+('aa222222-2222-4222-8222-222222222222', 'aa111111-1111-4111-8111-111111111111', 'l', 'Litre', 'L', 1.00000000, TRUE, NOW()),
+('aa333333-3333-4333-8333-333333333333', 'aa111111-1111-4111-8111-111111111111', 'ml', 'Millilitre', 'mL', 0.00100000, FALSE, NOW())
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO retailer (id, name, normalized_name, retailer_type, website_url, is_active, created_at, updated_at) VALUES
-('r1111111-1111-4111-8111-111111111111', 'Tesco', 'tesco', 'SUPERMARKET', 'https://www.tesco.com', TRUE, NOW(), NOW())
+('aa444444-4444-4444-8444-444444444444', 'Tesco', 'tesco', 'SUPERMARKET', 'https://www.tesco.com', TRUE, NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO shop (id, retailer_id, name, address_id, phone_number, is_online, latitude, longitude, timezone_name, is_active, created_at, updated_at) VALUES
-('33333333-3333-4333-8333-333333333333', 'r1111111-1111-4111-8111-111111111111', 'Tesco Extra', 'a1111111-1111-4111-8111-111111111111', NULL, FALSE, NULL, NULL, 'Europe/London', TRUE, NOW(), NOW())
+('33333333-3333-4333-8333-333333333333', 'aa444444-4444-4444-8444-444444444444', 'Tesco Extra', 'a1111111-1111-4111-8111-111111111111', NULL, FALSE, NULL, NULL, 'Europe/London', TRUE, NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO discount_type (id, code, name, description, is_active, created_at) VALUES
@@ -46,14 +46,14 @@ INSERT INTO discount_type (id, code, name, description, is_active, created_at) V
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO privacy_notice_version (id, notice_kind, version_label, locale, content_hash, published_at, retired_at) VALUES
-('n1111111-1111-4111-8111-111111111111', 'terms_of_service', '2026-04-01', 'en-GB', '1111111111111111111111111111111111111111111111111111111111111111', NOW(), NULL),
-('n2222222-2222-4222-8222-222222222222', 'privacy_policy', '2026-04-01', 'en-GB', '2222222222222222222222222222222222222222222222222222222222222222', NOW(), NULL),
-('n3333333-3333-4333-8333-333333333333', 'cookie_policy', '2026-04-01', 'en-GB', '3333333333333333333333333333333333333333333333333333333333333333', NOW(), NULL)
+('aa555555-5555-4555-8555-555555555555', 'terms_of_service', '2026-04-01', 'en-GB', '1111111111111111111111111111111111111111111111111111111111111111', NOW(), NULL),
+('aa666666-6666-4666-8666-666666666666', 'privacy_policy', '2026-04-01', 'en-GB', '2222222222222222222222222222222222222222222222222222222222222222', NOW(), NULL),
+('aa777777-7777-4777-8777-777777777777', 'cookie_policy', '2026-04-01', 'en-GB', '3333333333333333333333333333333333333333333333333333333333333333', NOW(), NULL)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO processing_purpose (id, code, name, lawful_basis, consent_required, retention_policy_id, description, created_at) VALUES
-('p1111111-1111-4111-8111-111111111111', 'terms_of_service', 'Terms of Service Acceptance', 'CONTRACT', TRUE, NULL, 'Tracks acceptance of the terms of service notice.', NOW()),
-('p2222222-2222-4222-8222-222222222222', 'privacy_policy', 'Privacy Policy Acceptance', 'LEGAL_OBLIGATION', TRUE, NULL, 'Tracks acceptance of the privacy policy notice.', NOW())
+('aa888888-8888-4888-8888-888888888888', 'terms_of_service', 'Terms of Service Acceptance', 'CONTRACT', TRUE, NULL, 'Tracks acceptance of the terms of service notice.', NOW()),
+('aa999999-9999-4999-8999-999999999999', 'privacy_policy', 'Privacy Policy Acceptance', 'LEGAL_OBLIGATION', TRUE, NULL, 'Tracks acceptance of the privacy policy notice.', NOW())
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO account (id, public_handle, account_status, created_at, updated_at, deleted_at, last_active_at) VALUES
@@ -78,14 +78,14 @@ INSERT INTO account_phone (
     id, account_id, e164_phone_number, extension, phone_role, is_sms_enabled, is_voice_enabled,
     is_primary_for_account, verified_at, verification_method, created_at, updated_at, deleted_at
 ) VALUES (
-    'ph111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'ee111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     '+447700900123', NULL, 'PRIMARY', TRUE, TRUE,
     TRUE, NOW(), 'seed', NOW(), NOW(), NULL
 )
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO data_source (id, source_type, account_id, source_name, trust_score, is_verified, created_at) VALUES
-('s1111111-1111-4111-8111-111111111111', 'USER_SUBMISSION', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Alex Pricewatch', 75.00, FALSE, NOW())
+('aa121212-1212-4212-8212-121212121212', 'USER_SUBMISSION', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Alex Pricewatch', 75.00, FALSE, NOW())
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO item (
@@ -104,8 +104,8 @@ INSERT INTO item_variant (
     approved_by_account_id, created_at, updated_at
 ) VALUES (
     '22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111',
-    'b1111111-1111-4111-8111-111111111111', '1L Carton', 1.000000, 'u1111111-1111-4111-8111-111111111111', 1,
-    1.000000, 'u1111111-1111-4111-8111-111111111111', 'approved', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'b1111111-1111-4111-8111-111111111111', '1L Carton', 1.000000, 'aa222222-2222-4222-8222-222222222222', 1,
+    1.000000, 'aa222222-2222-4222-8222-222222222222', 'approved', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NOW(), NOW()
 )
 ON CONFLICT (id) DO NOTHING;
@@ -114,7 +114,7 @@ INSERT INTO variant_identifier (
     id, item_variant_id, identifier_type, scope_type, retailer_id, shop_id,
     identifier_value, is_primary, valid_from, valid_to, created_at
 ) VALUES (
-    'vi111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+    'aa131313-1313-4313-8313-131313131313', '22222222-2222-4222-8222-222222222222',
     'gtin', 'GLOBAL', NULL, NULL, '5012345678901', TRUE, NULL, NULL, NOW()
 )
 ON CONFLICT (id) DO NOTHING;
@@ -122,7 +122,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO shop_listing (
     id, shop_id, item_variant_id, external_sku, listing_url, first_seen_at, last_seen_at, is_active, created_at
 ) VALUES (
-    'sl111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333333',
+    'aa141414-1414-4414-8414-141414141414', '33333333-3333-4333-8333-333333333333',
     '22222222-2222-4222-8222-222222222222', 'TESCO-MILK-1L', 'https://example.com/items/milk-1l',
     NOW(), NOW(), TRUE, NOW()
 )
@@ -133,13 +133,13 @@ INSERT INTO consent_record (
     consent_status, captured_via, evidence_json, captured_at, withdrawn_at
 ) VALUES
 (
-    'cr111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL,
-    'p1111111-1111-4111-8111-111111111111', 'n1111111-1111-4111-8111-111111111111',
+    'aa151515-1515-4515-8515-151515151515', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL,
+    'aa888888-8888-4888-8888-888888888888', 'aa555555-5555-4555-8555-555555555555',
     'accepted', 'seed', '{"source":"seed"}'::jsonb, NOW(), NULL
 ),
 (
-    'cr222222-2222-4222-8222-222222222222', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL,
-    'p2222222-2222-4222-8222-222222222222', 'n2222222-2222-4222-8222-222222222222',
+    'aa161616-1616-4616-8616-161616161616', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL,
+    'aa999999-9999-4999-8999-999999999999', 'aa666666-6666-4666-8666-666666666666',
     'accepted', 'seed', '{"source":"seed"}'::jsonb, NOW(), NULL
 )
 ON CONFLICT (id) DO NOTHING;
@@ -148,8 +148,8 @@ INSERT INTO cookie_consent (
     id, account_id, anonymous_subject_token_hash, notice_version_id,
     preferences_allowed, analytics_allowed, marketing_allowed, captured_at, updated_at, withdrawn_at
 ) VALUES (
-    'cc111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL,
-    'n3333333-3333-4333-8333-333333333333',
+    'aa171717-1717-4717-8717-171717171717', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL,
+    'aa777777-7777-4777-8777-777777777777',
     TRUE, TRUE, FALSE, NOW(), NOW(), NULL
 )
 ON CONFLICT (id) DO NOTHING;

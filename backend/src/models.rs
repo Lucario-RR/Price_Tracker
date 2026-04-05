@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -12,10 +13,21 @@ pub struct ResponseMeta {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HealthComponent {
+    pub status: String,
+    pub connected: bool,
+    pub detail: String,
+    pub checked_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HealthStatus {
     pub status: String,
     pub service: String,
     pub utc_time: DateTime<Utc>,
+    pub api: HealthComponent,
+    pub database: HealthComponent,
     pub applied_migrations: Vec<String>,
 }
 
@@ -424,6 +436,22 @@ pub struct LoginRequest {
 pub struct ProfileUpdateRequest {
     pub display_name: Option<String>,
     pub default_currency: Option<String>,
+    pub locale: Option<String>,
+    pub timezone_name: Option<String>,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordChangeRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarUpdateRequest {
+    pub file_id: Uuid,
 }
 
 #[derive(Deserialize)]
@@ -433,24 +461,30 @@ pub struct LegalDocumentAcceptance {
     pub version: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UserSecuritySummary {
     pub password_set: bool,
     pub mfa_enabled: bool,
-    pub passkey_count: i32,
+    pub passkey_count: i64,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserProfile {
     pub id: Uuid,
+    pub status: String,
     pub primary_email: String,
     pub primary_phone: Option<String>,
     pub display_name: String,
     pub roles: Vec<String>,
     pub scopes: Vec<String>,
     pub default_currency: String,
+    pub locale: String,
+    pub timezone_name: String,
+    pub profile_bio: Option<String>,
+    pub avatar_file_id: Option<Uuid>,
+    pub avatar_filename: Option<String>,
     pub email_count: i64,
     pub phone_count: i64,
     pub security: UserSecuritySummary,
@@ -464,6 +498,143 @@ pub struct AuthSession {
     pub token_type: String,
     pub expires_in_seconds: i32,
     pub user: UserProfile,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTableColumn {
+    pub key: String,
+    pub label: String,
+    pub input: String,
+    pub required: bool,
+    pub mutable: bool,
+    pub description: Option<String>,
+    pub lookup_key: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminLookupOption {
+    pub id: Uuid,
+    pub label: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTableDefinition {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub supports_create: bool,
+    pub supports_approval: bool,
+    pub columns: Vec<AdminTableColumn>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminOverview {
+    pub account_count: i64,
+    pub category_count: i64,
+    pub brand_count: i64,
+    pub unit_count: i64,
+    pub retailer_count: i64,
+    pub shop_count: i64,
+    pub item_count: i64,
+    pub item_variant_count: i64,
+    pub discount_type_count: i64,
+    pub pending_moderation_count: i64,
+    pub system_setting_count: i64,
+    pub public_admin_bootstrap_enabled: bool,
+    pub tables: Vec<AdminTableDefinition>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTableRows {
+    pub table: AdminTableDefinition,
+    pub rows: Vec<serde_json::Value>,
+    pub lookups: std::collections::HashMap<String, Vec<AdminLookupOption>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSystemSetting {
+    pub id: Uuid,
+    pub key: String,
+    pub scope: String,
+    pub value_type: String,
+    pub description: Option<String>,
+    pub is_sensitive: bool,
+    pub default_value: Option<Value>,
+    pub value: Value,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub updated_by_account_id: Option<Uuid>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSystemSettingUpdateRequest {
+    pub value: Value,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserSummary {
+    pub id: Uuid,
+    pub status: String,
+    pub display_name: String,
+    pub primary_email: String,
+    pub primary_phone: Option<String>,
+    pub roles: Vec<String>,
+    pub scopes: Vec<String>,
+    pub locale: String,
+    pub timezone_name: String,
+    pub default_currency: String,
+    pub profile_bio: Option<String>,
+    pub email_count: i64,
+    pub phone_count: i64,
+    pub avatar_file_id: Option<Uuid>,
+    pub avatar_filename: Option<String>,
+    pub security: UserSecuritySummary,
+    pub created_at: DateTime<Utc>,
+    pub last_active_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub suspended_until: Option<DateTime<Utc>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserCreateRequest {
+    pub email: String,
+    pub password: String,
+    pub display_name: String,
+    pub primary_phone: Option<String>,
+    pub role_codes: Option<Vec<String>>,
+    pub account_status: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserUpdateRequest {
+    pub display_name: Option<String>,
+    pub primary_email: Option<String>,
+    pub primary_phone: Option<String>,
+    pub role_codes: Option<Vec<String>>,
+    pub account_status: Option<String>,
+    pub default_currency: Option<String>,
+    pub locale: Option<String>,
+    pub timezone_name: Option<String>,
+    pub profile_bio: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserBulkActionRequest {
+    pub account_ids: Vec<Uuid>,
+    pub action: String,
+    pub status: Option<String>,
+    pub reason: Option<String>,
 }
 
 #[derive(Serialize, FromRow)]

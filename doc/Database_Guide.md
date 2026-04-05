@@ -221,6 +221,7 @@ Non-auth profile information.
 **Notes**
 - Avoid collecting DOB, gender, national IDs, or other high-risk personal data unless there is a real business requirement.
 - Avatar/profile photos should be linked using `file_attachment` with role `AVATAR`.
+- The current frontend self-service page edits `display_name`, `locale`, `timezone_name`, `preferred_currency_code`, and `profile_bio` directly through `/me`.
 
 ---
 
@@ -349,6 +350,7 @@ Current password verifier for the account.
 **Notes**
 - Salt is intentionally explicit because you requested it.
 - In some implementations the salt is also embedded inside the encoded hash string; the separate column still keeps the schema clear and portable.
+- The current backend now updates `password_credential` and archives prior versions into `password_history` when `/auth/password/change` is used.
 
 ---
 
@@ -498,6 +500,10 @@ Server-side session / refresh-token session / device session.
 
 ## 6.4 Authorization and settings
 
+Implementation boundary note:
+- Temporary public admin bootstrap is an application-layer feature flag, not a special database table.
+- The database still models admin access the normal way through `role`, `permission`, and `account_role`.
+
 ### `role`
 Reusable application role.
 
@@ -592,6 +598,10 @@ System-wide settings value.
 | setting_value_json | JSONB | No |  | |
 | updated_by_account_id | UUID | Yes | FK -> account.id | |
 | updated_at | TIMESTAMPTZ | No |  | |
+
+**Current implementation note**
+- The frontend admin settings panel now reads and writes persisted values through this table.
+- Typical live values include publish-mode toggles such as maintenance mode, hidden debug availability, and other dashboard-facing switches.
 
 ---
 
@@ -712,6 +722,7 @@ This is what allows **many files for one entry**.
 
 **Notes**
 - Example: one shopping with two receipt photos = two rows pointing to the same `purchase.id`.
+- The current implementation uses `entity_type = 'account'` and `attachment_role = 'avatar'` for user avatar attachments.
 - This generic model is highly reusable across projects.
 - Trade-off: generic `entity_type/entity_id` links are flexible but cannot enforce strict DB-level foreign keys to every possible target table.
 - If strict FK enforcement is required for a specific domain, add dedicated join tables on top of this template, for example:
@@ -941,6 +952,9 @@ Generic moderation/abuse suspension table.
 | ends_at | TIMESTAMPTZ | Yes |  | null for indefinite |
 | created_by_account_id | UUID | No | FK -> account.id | moderator/admin |
 | created_at | TIMESTAMPTZ | No |  | |
+
+**Notes**
+- Admin bulk freeze and set-status actions now create rows here so account moderation history is retained for later review.
 
 ---
 

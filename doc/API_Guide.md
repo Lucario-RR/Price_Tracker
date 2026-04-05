@@ -120,13 +120,21 @@ Minimum auth endpoints:
 | Method | Path                    | Auth   | Purpose                                      |
 | ------ | ----------------------- | ------ | -------------------------------------------- |
 | POST   | `/auth/register`        | public | create account                               |
+| POST   | `/auth/register-admin`  | public | temporary admin bootstrap for setup-only use |
 | POST   | `/auth/login`           | public | login with email/password or federated token |
 | POST   | `/auth/refresh`         | cookie | refresh access token                         |
 | POST   | `/auth/logout`          | user   | invalidate session/refresh token             |
+| POST   | `/auth/password/change` | user   | change the signed-in account password        |
 | POST   | `/auth/password/forgot` | public | reset flow                                   |
 | POST   | `/auth/password/reset`  | public | complete reset                               |
 | GET    | `/me`                   | user   | current profile and scopes                   |
 | PATCH  | `/me`                   | user   | update profile/preferences                   |
+| POST   | `/me/avatar`            | user   | attach an owned uploaded file as avatar      |
+| DELETE | `/me/avatar`            | user   | remove the active avatar                     |
+| GET    | `/admin/users`          | admin  | list users for operations and review         |
+| POST   | `/admin/users`          | admin  | create a user or admin account               |
+| PATCH  | `/admin/users/{accountId}` | admin | update one user profile, role set, or status |
+| POST   | `/admin/users/bulk-actions` | admin | freeze, activate, delete, restore, or set status |
 
 Security requirements:
 
@@ -135,6 +143,23 @@ Security requirements:
 * MFA-ready design for admin accounts
 * HSTS + TLS only
 * no credentials in URL parameters
+
+Current dev-build implementation note:
+
+* the demo backend now issues an `HttpOnly` session cookie on register/login/refresh and expires it on logout
+* protected routes no longer fall back to a default account when auth is missing
+* if `x-account-id` is sent, it must match the authenticated bearer token or session cookie
+* `/auth/password/change` now updates the account password in the auth tables instead of returning a placeholder acknowledgement
+* `/me/avatar` now attaches one of the caller-owned uploaded files through the shared `file_attachment` model
+* `/admin/users` and `/admin/users/bulk-actions` expose the current admin user-management flow used by the publish frontend
+* profile update endpoints should validate preferred currency codes before writing; unsupported codes should return `400` instead of bubbling up as a generic server error. In the seeded dev data, `GBP` and `EUR` are available.
+* the frontend should clear local cached user state, retry queues, and recent response history on sign-out so a later guest or user cannot inherit private data
+
+Temporary bootstrap note:
+
+* if `/auth/register-admin` exists, gate it behind an explicit environment flag such as `ALLOW_PUBLIC_ADMIN_BOOTSTRAP`
+* keep it visually hidden from the normal published flow
+* remove or disable it before a stricter production release
 
 ## 6. Common request and response contract
 
@@ -394,6 +419,10 @@ The recent generated scope includes watchlists and price alerts.
 | PATCH  | `/me/alerts/{alertId}`          | user | edit alert                  |
 | DELETE | `/me/alerts/{alertId}`          | user | delete alert                |
 
+Identity safety note:
+
+* deleting a secondary email should succeed for the owning user, but the API should reject deletion of the active primary email until another address has been promoted first
+
 ### 8.7 Admin and moderation
 
 The generated admin scope includes approval/rejection, duplicate merge, suspicious price review, shop verification, unit/category/discount configuration, and abuse/security controls. 
@@ -403,6 +432,15 @@ The generated admin scope includes approval/rejection, duplicate merge, suspicio
 | GET    | `/admin/moderation/prices`                  | admin | queue of flagged/submitted prices      |
 | POST   | `/admin/moderation/prices/{priceId}/verify` | admin | verify and publish                     |
 | POST   | `/admin/moderation/prices/{priceId}/reject` | admin | reject submission                      |
+| GET    | `/admin/overview`                           | admin | dashboard summary counts and feature flags |
+| GET    | `/admin/settings`                           | admin | list persisted system settings         |
+| PATCH  | `/admin/settings/{settingKey}`              | admin | update one persisted system setting    |
+| GET    | `/admin/database/tables`                    | admin | list curated debug-safe editable tables |
+| GET    | `/admin/database/tables/{tableId}`          | admin | load all exposed rows for one table    |
+| POST   | `/admin/database/tables/{tableId}`          | admin | create a new row in a curated table    |
+| PATCH  | `/admin/database/tables/{tableId}/{recordId}` | admin | update one row in a curated table    |
+| DELETE | `/admin/database/tables/{tableId}/{recordId}` | admin | archive or delete one curated table row |
+| POST   | `/admin/database/tables/{tableId}/{recordId}/approve` | admin | approve one curated table row when that module supports approval |
 | GET    | `/admin/moderation/items`                   | admin | pending item/variant/brand suggestions |
 | POST   | `/admin/items/{itemId}/merge`               | admin | merge duplicates                       |
 | POST   | `/admin/shops/{shopId}/verify`              | admin | verify shop legitimacy                 |
@@ -413,7 +451,18 @@ The generated admin scope includes approval/rejection, duplicate merge, suspicio
 | GET    | `/admin/security/events`                    | admin | abuse/security events                  |
 | POST   | `/admin/users/{userId}/ban`                 | admin | ban or restrict abusive user           |
 
+`GET /admin/overview` currently returns dashboard counts for accounts, categories, brands, units, retailers, shops, items, item variants, discount types, pending moderation, and system settings, plus the curated admin table definitions used by the Vue admin portal.
+
 Admin writes must always create audit entries.
+
+Published frontend note:
+
+* the main UI can stay publication-first with a pinned left navigation for public/user flows while authenticated admins jump into a separate admin portal
+* raw debug surfaces such as a generic API explorer should live behind an extra reveal step, not in the default public navigation
+* admin table payloads can include field-level lookup options and descriptions so the frontend can present searchable selectors for foreign keys instead of raw UUID entry
+* `GET /admin/database/tables/{tableId}` can return `{ table, rows, lookups }`, where `rows` stays table-specific and `lookups` maps foreign-key fields to searchable label options
+* admin table metadata now declares whether a module supports approval, so the frontend can show an `Everything / Awaiting approval` switch only for approval-aware catalog modules such as items and item variants
+* primary UUIDs should be generated server-side; for example, base units can omit `unitFamilyId` and let the backend create or reuse a family automatically
 
 ## 9. Example critical flows
 
@@ -573,6 +622,7 @@ The generated project notes already call out SQL injection risk, rate limiting, 
 * admin endpoints isolated under `/admin/*`
 * service-to-service auth with mTLS or signed internal tokens
 * default deny on new routes
+* reject stale or mismatched client account context instead of silently resolving another account
 
 ### Anti-abuse
 

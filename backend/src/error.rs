@@ -9,6 +9,7 @@ pub enum AppError {
     NotFound(String),
     BadRequest(String),
     Unauthorized(String),
+    Forbidden(String),
     Conflict(String),
     Internal(anyhow::Error),
 }
@@ -52,6 +53,11 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(message) => (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "UNAUTHORIZED",
+                message,
+            ),
+            AppError::Forbidden(message) => (
+                axum::http::StatusCode::FORBIDDEN,
+                "FORBIDDEN",
                 message,
             ),
             AppError::Conflict(message) => (axum::http::StatusCode::CONFLICT, "CONFLICT", message),

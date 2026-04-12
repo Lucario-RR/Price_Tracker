@@ -1,0 +1,487 @@
+<template>
+  <ConfirmDialog
+    :visible="confirmDialog.visible"
+    :title="confirmDialog.title"
+    :message="confirmDialog.message"
+    :confirm-label="confirmDialog.confirmLabel"
+    :cancel-label="confirmDialog.cancelLabel"
+    :tone="confirmDialog.tone"
+    @confirm="resolveConfirmation(true)"
+    @cancel="resolveConfirmation(false)"
+  />
+
+  <div v-if="feedback.visible" class="ptfb">
+    <n-alert :type="feedbackAlertType" :title="feedback.pending ? '请求中' : '提示'" closable @close="clearFeedback">
+      <n-space v-if="feedback.pending" align="center" size="small">
+        <n-spin size="small" />
+        <span>{{ feedback.message }}</span>
+      </n-space>
+      <span v-else>{{ feedback.message }}</span>
+    </n-alert>
+  </div>
+
+  <AdminPortalPage
+    v-if="ui.page === 'admin' && model.isAdmin"
+    :model="model"
+    :settings="data.settings"
+    :loading-settings="data.loadingSettings"
+    :saving-setting="data.savingSetting"
+    :disabled="model.isBusy"
+    :feedback="feedback"
+    :hidden-modules-enabled="hiddenModulesEnabled"
+    :maintenance-mode="maintenanceMode"
+    :refresh-all="refreshAdminPage"
+    :refresh-settings="loadSettings"
+    :create-user="createAdminUser"
+    :update-user="updateAdminUser"
+    :apply-user-action="applyAdminUserAction"
+    :save-setting="saveSetting"
+    :save-admin-record="saveAdminRecordDraft"
+    :delete-admin-record="deleteAdminRecord"
+    :approve-admin-record="approveAdminRecord"
+    :bulk-delete-admin-records="bulkDeleteAdminRecords"
+    :bulk-approve-admin-records="bulkApproveAdminRecords"
+    :confirm-action="requestConfirmation"
+    @exit="exitAdminMode"
+  />
+
+  <n-layout v-else position="absolute" style="inset: 0; height: 100vh" has-sider>
+    <n-layout-sider
+      v-if="ui.menuPinned"
+      bordered
+      show-trigger
+      collapse-mode="width"
+      :width="260"
+      :native-scrollbar="false"
+      content-style="padding: 12px"
+    >
+      <n-space vertical size="large">
+        <n-text strong>导航</n-text>
+        <n-button
+          v-for="link in drawerLinks"
+          :key="link.label"
+          block
+          quaternary
+          :type="isDrawerLinkActive(link) ? 'primary' : 'default'"
+          @click="openPage(link.page, link.tab)"
+        >
+          <n-space vertical align="start" size="small">
+            <n-text>{{ link.label }}</n-text>
+            <n-text depth="3" style="font-size: 12px">{{ link.description }}</n-text>
+          </n-space>
+        </n-button>
+        <n-text depth="3" style="font-size: 12px">管理员入口在顶部；仅管理员可进入独立后台。</n-text>
+      </n-space>
+    </n-layout-sider>
+
+    <n-layout>
+      <n-layout-header bordered style="height: 64px; padding: 0 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap">
+        <n-button quaternary size="small" @click="togglePinnedMenu">
+          {{ ui.menuPinned ? "收起侧栏" : "固定侧栏" }}
+        </n-button>
+        <n-space vertical size="small">
+          <n-text depth="3" style="font-size: 11px">发布版</n-text>
+          <n-text tag="h1" style="margin: 0; font-size: 1.2rem">PriceTracker</n-text>
+        </n-space>
+        <n-space size="small" style="flex: 1; justify-content: center" wrap>
+          <n-tag v-for="light in model.statusLights" :key="light.key" size="small" :type="statusTagType(light.tone)">
+            {{ light.label }}: {{ light.state }}
+          </n-tag>
+        </n-space>
+        <n-space>
+          <template v-if="isLoggedIn">
+            <n-button quaternary @click="openPage('dashboard', 'overview')">
+              <n-space align="center" size="small">
+                <n-avatar round size="small" :src="accountAvatarPreviewUrl || undefined">
+                  {{ accountAvatarInitials }}
+                </n-avatar>
+                <n-space vertical size="small">
+                  <n-text strong style="font-size: 13px">{{ accountDisplayName }}</n-text>
+                  <n-text depth="3" style="font-size: 11px">{{ accountRoleLabel }}</n-text>
+                </n-space>
+              </n-space>
+            </n-button>
+            <n-button v-if="model.isAdmin" size="small" @click="openPage('admin')">管理后台</n-button>
+            <n-button size="small" :disabled="model.isBusy" @click="logout">{{ feedback.pending ? "退出中…" : "退出" }}</n-button>
+          </template>
+          <n-button v-else type="primary" size="small" @click="openPage('auth')">登录 / 注册</n-button>
+        </n-space>
+      </n-layout-header>
+
+      <n-layout-content content-style="padding: 20px 24px 32px; overflow: auto; max-width: 1280px; margin: 0 auto; width: 100%">
+        <n-space v-if="ui.page === 'home'" vertical size="large" style="width: 100%">
+          <n-card title="从这里开始" :segmented="{ content: true }">
+            <n-grid :cols="2" :x-gap="16" responsive="screen">
+              <n-gi span="2 m:1">
+                <n-text depth="2" style="display: block; margin-bottom: 12px">
+                  公共首页按角色解锁工具；侧栏可固定；管理员使用独立门户。
+                </n-text>
+                <n-space>
+                  <n-button type="primary" @click="openPage(isLoggedIn ? 'dashboard' : 'auth')">
+                    {{ isLoggedIn ? "打开工作台" : "开始使用" }}
+                  </n-button>
+                  <n-button quaternary @click="model.runHealthCheck">健康检查</n-button>
+                </n-space>
+              </n-gi>
+              <n-gi span="2 m:1">
+                <n-card v-if="isLoggedIn" size="small" embedded title="当前账户">
+                  <n-space align="center">
+                    <n-avatar round :src="accountAvatarPreviewUrl || undefined" :size="48">{{ accountAvatarInitials }}</n-avatar>
+                    <n-space vertical>
+                      <n-text strong>{{ accountDisplayName }}</n-text>
+                      <n-text depth="3">{{ accountAvatarLabel }}</n-text>
+                      <n-space>
+                        <n-tag size="small" :type="accountAvatarPreviewUrl ? 'success' : 'info'">
+                          {{ accountAvatarPreviewUrl ? "头像预览就绪" : "首字母头像" }}
+                        </n-tag>
+                        <n-tag size="small" type="warning">{{ accountRoleLabel }}</n-tag>
+                      </n-space>
+                    </n-space>
+                  </n-space>
+                </n-card>
+                <n-grid :cols="2" :x-gap="12" :y-gap="12" style="margin-top: 12px">
+                  <n-gi v-for="card in model.summaryCards" :key="card.label" span="2 m:1">
+                    <n-card size="small" embedded>
+                      <n-statistic :label="card.label" :value="card.value" />
+                    </n-card>
+                  </n-gi>
+                </n-grid>
+              </n-gi>
+            </n-grid>
+          </n-card>
+
+          <n-grid :cols="3" :x-gap="12" responsive="screen">
+            <n-gi v-for="light in model.statusLights" :key="light.key" span="3 m:1">
+              <n-card size="small" embedded>
+                <n-statistic :label="light.label" :value="light.state">
+                  <template #suffix>
+                    <n-tag size="tiny" :type="statusTagType(light.tone)">状态</n-tag>
+                  </template>
+                </n-statistic>
+                <n-text depth="3" style="display: block; margin-top: 8px">{{ light.detail }}</n-text>
+              </n-card>
+            </n-gi>
+          </n-grid>
+        </n-space>
+
+        <n-card v-else-if="ui.page === 'auth'" title="账户" :segmented="{ content: true }">
+          <n-tabs v-model:value="ui.authMode" type="line">
+            <n-tab-pane name="login" tab="登录" />
+            <n-tab-pane name="register" tab="注册" />
+            <n-tab-pane name="admin" tab="管理员引导" />
+          </n-tabs>
+
+          <n-form style="margin-top: 16px" label-placement="top">
+            <n-form-item label="邮箱">
+              <n-input v-model:value="model.workbench.session.email" placeholder="登录邮箱" />
+            </n-form-item>
+            <n-form-item label="密码">
+              <n-input
+                v-model:value="model.workbench.session.password"
+                type="password"
+                show-password-on="mousedown"
+                :placeholder="ui.authMode === 'login' ? '登录密码' : '至少 12 位'"
+              />
+            </n-form-item>
+            <template v-if="ui.authMode !== 'login'">
+              <n-form-item label="显示名称">
+                <n-input v-model:value="model.workbench.session.displayName" />
+              </n-form-item>
+              <n-form-item label="确认密码">
+                <n-input v-model:value="authState.confirmPassword" type="password" show-password-on="mousedown" />
+              </n-form-item>
+              <n-form-item label="手机（可选）">
+                <n-input v-model:value="model.workbench.session.primaryPhone" />
+              </n-form-item>
+            </template>
+          </n-form>
+
+          <n-space style="margin-top: 16px" wrap>
+            <n-button v-if="ui.authMode === 'login'" type="primary" :disabled="model.isBusy" @click="login">
+              {{ model.isBusy ? "登录中…" : "登录" }}
+            </n-button>
+            <n-button v-else-if="ui.authMode === 'register'" type="primary" :disabled="model.isBusy" @click="registerUser">
+              {{ model.isBusy ? "创建中…" : "注册用户" }}
+            </n-button>
+            <n-button v-else type="primary" :disabled="model.isBusy" @click="registerAdmin">
+              {{ model.isBusy ? "创建中…" : "创建管理员" }}
+            </n-button>
+            <n-button quaternary :disabled="model.isBusy" @click="model.fillDemoSession">填入演示账号</n-button>
+            <n-button quaternary :disabled="model.isBusy" @click="model.fillAdminSession">填入种子管理员</n-button>
+          </n-space>
+
+          <n-alert v-if="ui.authMode === 'admin'" type="warning" title="临时能力" style="margin-top: 16px">
+            上线前请关闭或限制管理员自助注册。
+          </n-alert>
+        </n-card>
+
+        <n-card v-else-if="!isLoggedIn" title="需要登录">
+          <n-empty description="请先登录以使用工作台">
+            <template #extra>
+              <n-button type="primary" @click="openPage('auth')">去登录</n-button>
+            </template>
+          </n-empty>
+        </n-card>
+
+        <n-space v-else vertical size="large" style="width: 100%">
+          <n-card size="small" embedded>
+            <n-space justify="space-between" align="center" wrap>
+              <n-space vertical>
+                <n-text depth="3">工作台</n-text>
+                <n-text tag="h2" style="margin: 0; font-size: 1.1rem">
+                  {{ model.workbench.session.displayName || model.workbench.session.email }}
+                </n-text>
+                <n-text depth="3">
+                  {{ model.isAdmin ? "日常用户工具在此；深度运维请进管理后台。" : "已解锁用户功能。" }}
+                </n-text>
+              </n-space>
+              <n-space>
+                <n-button @click="refreshDashboard">刷新</n-button>
+                <n-button quaternary @click="model.runHealthCheck">健康检查</n-button>
+                <n-button v-if="model.isAdmin" quaternary @click="openPage('admin')">管理后台</n-button>
+              </n-space>
+            </n-space>
+          </n-card>
+
+          <n-tabs v-model:value="ui.tab" type="segment">
+            <n-tab-pane name="overview" tab="总览" />
+            <n-tab-pane name="capture" tab="采集" />
+            <n-tab-pane name="activity" tab="活动" />
+          </n-tabs>
+
+          <template v-if="ui.tab === 'overview'">
+            <UserAccountPanel
+              :profile="data.profile"
+              :loading="data.loadingUser"
+              :busy="model.isBusy"
+              :profile-form="profileForm"
+              :email-draft="emailDraft"
+              :phone-draft="phoneDraft"
+              :password-form="passwordForm"
+              :avatar-state="avatarState"
+              :cookie-preferences="data.cookiePreferences"
+              :emails="data.emails"
+              :phones="data.phones"
+              @refresh="loadUserData"
+              @save-profile="saveProfile"
+              @pick-avatar="pickAvatar"
+              @upload-avatar="uploadAvatar"
+              @remove-avatar="removeAvatar"
+              @add-email="addEmail"
+              @delete-email="deleteEmail"
+              @verify-email="verifyEmail"
+              @make-primary-email="makePrimaryEmail"
+              @add-phone="addPhone"
+              @delete-phone="deletePhone"
+              @verify-phone="verifyPhone"
+              @make-primary-phone="makePrimaryPhone"
+              @change-password="changePassword"
+              @save-cookie-preferences="saveCookiePreferences"
+            />
+
+            <n-card title="当前上下文" size="small" embedded style="margin-top: 16px">
+              <n-descriptions bordered size="small" :column="1">
+                <n-descriptions-item label="商店">{{ selectedShop?.name || '未选择' }}</n-descriptions-item>
+                <n-descriptions-item label="商品">{{ selectedItem?.name || '未选择' }}</n-descriptions-item>
+                <n-descriptions-item label="变体 ID">{{ model.workbench.lookup.variantId || '未选择' }}</n-descriptions-item>
+                <n-descriptions-item label="维护模式">{{ maintenanceMode ? '开' : '关' }}</n-descriptions-item>
+                <n-descriptions-item label="头像">{{ data.profile?.avatarFilename || data.profile?.avatarFileId || '无' }}</n-descriptions-item>
+              </n-descriptions>
+            </n-card>
+          </template>
+
+          <template v-else-if="ui.tab === 'capture'">
+            <n-alert v-if="maintenanceMode" type="warning" title="维护模式" style="margin-bottom: 12px">
+              维护中，提交类操作请谨慎。
+            </n-alert>
+
+            <n-space vertical size="large">
+              <ScannerPanel
+                :model="model.workbench.capture"
+                :shop-id="model.workbench.lookup.shopId"
+                :disabled="model.isBusy || maintenanceMode"
+                @capture="model.handleCapturedCode"
+                @lookup="model.lookupCapturedCode"
+              />
+
+              <n-card title="目录与选择" :segmented="{ content: true }">
+                <template #header-extra>
+                  <n-button size="small" quaternary :disabled="data.loadingPublic" @click="loadPublicData">刷新目录</n-button>
+                </template>
+                <n-grid :cols="2" :x-gap="12" responsive="screen">
+                  <n-gi span="2">
+                    <n-form-item label="搜索商品">
+                      <n-input v-model:value="ui.search" placeholder="回车刷新" @keyup.enter.prevent="loadPublicData" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="商店">
+                      <n-select
+                        v-model:value="model.workbench.lookup.shopId"
+                        :options="[{ label: '请选择', value: '' }, ...data.shops.map((s) => ({ label: s.name, value: s.id }))]"
+                        filterable
+                      />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="商品">
+                      <n-select
+                        v-model:value="model.workbench.lookup.itemId"
+                        :options="[{ label: '请选择', value: '' }, ...data.items.map((i) => ({ label: i.name, value: i.id }))]"
+                        filterable
+                      />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2">
+                    <n-form-item label="变体">
+                      <n-select
+                        v-model:value="model.workbench.lookup.variantId"
+                        :options="[{ label: '请选择', value: '' }, ...data.variants.map((v) => ({ label: v.variantName || v.id, value: v.id }))]"
+                        filterable
+                      />
+                    </n-form-item>
+                  </n-gi>
+                </n-grid>
+                <n-space style="margin-top: 8px" wrap>
+                  <n-button quaternary :disabled="model.isBusy" @click="model.lookupCapturedCode">查询编码</n-button>
+                  <n-button quaternary :disabled="model.isBusy" @click="model.loadVariantDetail">变体详情</n-button>
+                  <n-button quaternary :disabled="model.isBusy" @click="model.compareVariant">对比</n-button>
+                </n-space>
+              </n-card>
+
+              <n-card title="采购与价格" :segmented="{ content: true }">
+                <n-grid :cols="2" :x-gap="12" responsive="screen">
+                  <n-gi span="2 m:1">
+                    <n-form-item label="采购时间">
+                      <input v-model="model.workbench.submission.purchaseTime" class="native-dt" type="datetime-local" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="记录时间">
+                      <input v-model="model.workbench.submission.recordedAt" class="native-dt" type="datetime-local" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="金额">
+                      <n-input v-model:value="model.workbench.submission.originalAmount" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="货币">
+                      <n-input v-model:value="model.workbench.submission.originalCurrency" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2">
+                    <n-form-item label="附件 ID">
+                      <n-input v-model:value="model.workbench.submission.attachmentFileIds" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2">
+                    <n-form-item label="备注">
+                      <n-input v-model:value="model.workbench.submission.priceNotes" type="textarea" :rows="3" />
+                    </n-form-item>
+                  </n-gi>
+                </n-grid>
+                <n-space style="margin-top: 8px" wrap>
+                  <n-button type="primary" :disabled="model.isBusy || maintenanceMode" @click="model.createPurchase">创建采购</n-button>
+                  <n-button :disabled="model.isBusy || maintenanceMode" @click="model.submitPrice">提交价格</n-button>
+                  <n-button quaternary :disabled="model.isBusy" @click="model.saveFullCaptureForRetry">保存捕获</n-button>
+                </n-space>
+              </n-card>
+
+              <n-card title="收据文件（演示字段）" :segmented="{ content: true }">
+                <n-grid :cols="2" :x-gap="12" responsive="screen">
+                  <n-gi span="2 m:1">
+                    <n-form-item label="文件名">
+                      <n-input v-model:value="model.workbench.submission.fileUpload.filename" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="类型">
+                      <n-input v-model:value="model.workbench.submission.fileUpload.contentType" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="大小">
+                      <n-input v-model:value="model.workbench.submission.fileUpload.size" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi span="2 m:1">
+                    <n-form-item label="用途">
+                      <n-input v-model:value="model.workbench.submission.fileUpload.purpose" />
+                    </n-form-item>
+                  </n-gi>
+                </n-grid>
+                <n-space style="margin-top: 8px">
+                  <n-button :disabled="model.isBusy" @click="model.createUploadIntent">创建上传意图</n-button>
+                  <n-button quaternary :disabled="model.isBusy" @click="model.completeUploadIntent">完成上传</n-button>
+                </n-space>
+              </n-card>
+            </n-space>
+          </template>
+
+          <template v-else-if="ui.tab === 'activity'">
+            <n-space vertical size="large">
+              <n-card title="我的数据概览" :segmented="{ content: true }">
+                <n-descriptions bordered size="small" :column="2">
+                  <n-descriptions-item label="采购">{{ data.purchases.length }}</n-descriptions-item>
+                  <n-descriptions-item label="价格">{{ data.prices.length }}</n-descriptions-item>
+                  <n-descriptions-item label="关注">{{ data.watchlist.length }}</n-descriptions-item>
+                  <n-descriptions-item label="提醒">{{ data.alerts.length }}</n-descriptions-item>
+                </n-descriptions>
+                <n-grid :cols="2" :x-gap="12" style="margin-top: 12px">
+                  <n-gi>
+                    <n-form-item label="提醒金额">
+                      <n-input v-model:value="ui.alertAmount" />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi>
+                    <n-form-item label="货币">
+                      <n-input v-model:value="ui.alertCurrency" />
+                    </n-form-item>
+                  </n-gi>
+                </n-grid>
+                <n-checkbox v-model:checked="ui.alertEnabled">新建提醒时默认启用</n-checkbox>
+                <n-space style="margin-top: 12px">
+                  <n-button :disabled="model.isBusy" @click="addWatchlist">{{ model.isBusy ? '保存中…' : '关注当前变体' }}</n-button>
+                  <n-button quaternary :disabled="model.isBusy" @click="addAlert">{{ model.isBusy ? '保存中…' : '创建提醒' }}</n-button>
+                </n-space>
+              </n-card>
+
+              <QueuePanel
+                :queue="model.queue"
+                :online="model.online"
+                :flushing="model.isFlushingQueue"
+                :confirm-action="requestConfirmation"
+                @flush="model.flushQueue"
+                @retry="model.retryQueueEntry"
+                @remove="model.removeQueueEntry"
+                @clear="model.clearQueue"
+              />
+
+              <ResponsePanel :history="model.history" />
+            </n-space>
+          </template>
+        </n-space>
+      </n-layout-content>
+    </n-layout>
+  </n-layout>
+</template>
+
+<style scoped>
+.ptfb {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4000;
+  width: min(560px, 92vw);
+}
+.native-dt {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  font: inherit;
+}
+</style>

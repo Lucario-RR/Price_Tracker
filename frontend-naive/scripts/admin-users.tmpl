@@ -1,0 +1,177 @@
+<template>
+  <n-card title="用户管理" :segmented="{ content: true }">
+    <template #header-extra>
+      <n-space>
+        <n-button size="small" quaternary :disabled="disabled || loading || saving" @click="refreshUsers">刷新</n-button>
+        <n-button size="small" type="primary" :disabled="disabled || saving" @click="openCreateModal">新建用户</n-button>
+      </n-space>
+    </template>
+
+    <n-space align="center" wrap style="margin-bottom: 12px">
+      <n-input v-model:value="ui.search" :disabled="disabled" clearable placeholder="搜索姓名、邮箱、角色或状态" style="min-width: 220px" />
+      <n-select
+        v-model:value="ui.pageSize"
+        :disabled="disabled"
+        style="width: 120px"
+        :options="[
+          { label: '10 / 页', value: 10 },
+          { label: '20 / 页', value: 20 },
+          { label: '25 / 页', value: 25 },
+          { label: '50 / 页', value: 50 },
+          { label: '100 / 页', value: 100 }
+        ]"
+      />
+    </n-space>
+
+    <n-card size="small" embedded title="批量操作" style="margin-bottom: 16px">
+      <n-space vertical>
+        <n-space align="center" wrap>
+          <n-tag size="small">已选 {{ bulkForm.selectedIds.length }}</n-tag>
+          <n-input v-model:value="bulkForm.reason" :disabled="disabled || saving" placeholder="原因" style="min-width: 200px" />
+          <n-select
+            v-model:value="bulkForm.status"
+            :disabled="disabled || saving"
+            style="width: 160px"
+            :options="[
+              { label: 'active', value: 'active' },
+              { label: 'review', value: 'review' },
+              { label: 'disabled', value: 'disabled' },
+              { label: 'suspended', value: 'suspended' },
+              { label: 'deleted', value: 'deleted' }
+            ]"
+          />
+        </n-space>
+        <n-space wrap>
+          <n-button quaternary :disabled="disabled || saving || !paginatedUsers.length" @click="toggleVisibleUsers">
+            {{ allVisibleSelected ? "取消本页全选" : "选择本页" }}
+          </n-button>
+          <n-button :disabled="disabled || saving || !bulkForm.selectedIds.length" @click="runBulkAction('freeze')">冻结</n-button>
+          <n-button quaternary :disabled="disabled || saving || !bulkForm.selectedIds.length" @click="runBulkAction('activate')">激活</n-button>
+          <n-button quaternary :disabled="disabled || saving || !bulkForm.selectedIds.length" @click="runBulkAction('set-status')">改状态</n-button>
+          <n-button type="error" tertiary :disabled="disabled || saving || !bulkForm.selectedIds.length" @click="runBulkAction('delete')">删除</n-button>
+        </n-space>
+      </n-space>
+    </n-card>
+
+    <n-spin :show="loading">
+      <n-empty v-if="!paginatedUsers.length" :description="loading ? '加载中…' : '没有匹配用户'" />
+      <n-space v-else vertical>
+        <n-card v-for="user in paginatedUsers" :key="user.id" size="small" embedded>
+          <n-space justify="space-between" align="start">
+            <n-space align="start">
+              <n-checkbox
+                :checked="bulkForm.selectedIds.includes(user.id)"
+                :disabled="disabled || saving"
+                @update:checked="
+                  (checked) => {
+                    const has = bulkForm.selectedIds.includes(user.id);
+                    if (checked && !has) bulkForm.selectedIds.push(user.id);
+                    if (!checked && has) {
+                      bulkForm.selectedIds = bulkForm.selectedIds.filter((id) => id !== user.id);
+                    }
+                  }
+                "
+              />
+              <n-space vertical size="small">
+                <n-text strong>{{ user.displayName || user.primaryEmail }}</n-text>
+                <n-text depth="3" style="font-size: 12px">{{ user.id }}</n-text>
+                <n-text depth="2">{{ user.primaryEmail }}</n-text>
+                <n-space>
+                  <n-tag size="small">{{ roleLabel(user) }}</n-tag>
+                  <n-tag type="info" size="small">{{ user.status }}</n-tag>
+                </n-space>
+                <n-text depth="3" style="font-size: 12px">最近活跃：{{ dateLabel(user.lastActiveAt) }}</n-text>
+              </n-space>
+            </n-space>
+            <n-space vertical>
+              <n-button size="tiny" quaternary :disabled="disabled || saving" @click="openDetailModal(user)">详情</n-button>
+              <n-button size="tiny" quaternary :disabled="disabled || saving" @click="openEditModal(user)">编辑</n-button>
+            </n-space>
+          </n-space>
+        </n-card>
+      </n-space>
+    </n-spin>
+
+    <n-space justify="center" style="margin-top: 16px">
+      <n-pagination v-model:page="ui.page" :page-count="totalPages" simple />
+    </n-space>
+
+    <n-modal v-model:show="ui.detailOpen" preset="card" style="width: min(720px, 94vw)" :title="ui.detailUser ? (ui.detailUser.displayName || ui.detailUser.primaryEmail) : ''">
+      <template v-if="ui.detailUser">
+        <n-descriptions bordered size="small" :column="1">
+          <n-descriptions-item label="邮箱">{{ ui.detailUser.primaryEmail }}</n-descriptions-item>
+          <n-descriptions-item label="手机">{{ ui.detailUser.primaryPhone || '—' }}</n-descriptions-item>
+          <n-descriptions-item label="角色">{{ roleLabel(ui.detailUser) }}</n-descriptions-item>
+          <n-descriptions-item label="权限">{{ ui.detailUser.scopes?.join(', ') || '无' }}</n-descriptions-item>
+          <n-descriptions-item label="状态">{{ ui.detailUser.status }}</n-descriptions-item>
+          <n-descriptions-item label="简介">{{ ui.detailUser.profileBio || '无' }}</n-descriptions-item>
+        </n-descriptions>
+        <n-space style="margin-top: 16px" wrap>
+          <n-button :disabled="disabled || saving" @click="openEditModal(ui.detailUser)">编辑</n-button>
+          <n-button quaternary :disabled="disabled || saving || ui.detailUser.status === 'active'" @click="runSingleAction(ui.detailUser.id, 'activate')">激活</n-button>
+          <n-button quaternary :disabled="disabled || saving || ui.detailUser.status === 'suspended'" @click="runSingleAction(ui.detailUser.id, 'freeze')">冻结</n-button>
+          <n-button type="error" tertiary :disabled="disabled || saving || ui.detailUser.status === 'deleted'" @click="runSingleAction(ui.detailUser.id, 'delete')">删除</n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
+    <n-modal v-model:show="ui.editorOpen" preset="card" style="width: min(640px, 94vw)" :title="ui.editorMode === 'create' ? '新建用户' : '编辑用户'">
+      <n-form label-placement="top">
+        <n-form-item label="邮箱">
+          <n-input v-model:value="editor.email" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item v-if="ui.editorMode === 'create'" label="密码">
+          <n-input v-model:value="editor.password" type="password" show-password-on="mousedown" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item v-if="ui.editorMode === 'create'" label="确认密码">
+          <n-input v-model:value="editor.passwordConfirm" type="password" show-password-on="mousedown" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item label="显示名称">
+          <n-input v-model:value="editor.displayName" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item label="手机">
+          <n-input v-model:value="editor.primaryPhone" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item label="角色">
+          <n-select
+            v-model:value="editor.roleLevel"
+            :disabled="disabled || saving"
+            :options="[
+              { label: '用户', value: 'user' },
+              { label: '管理员', value: 'admin' }
+            ]"
+          />
+        </n-form-item>
+        <n-form-item label="状态">
+          <n-select
+            v-model:value="editor.accountStatus"
+            :disabled="disabled || saving"
+            :options="[
+              { label: 'active', value: 'active' },
+              { label: 'review', value: 'review' },
+              { label: 'disabled', value: 'disabled' },
+              { label: 'suspended', value: 'suspended' },
+              { label: 'deleted', value: 'deleted' }
+            ]"
+          />
+        </n-form-item>
+        <n-form-item label="货币">
+          <n-select v-model:value="editor.defaultCurrency" :options="SUPPORTED_PROFILE_CURRENCIES.map((c) => ({ label: c.label, value: c.code }))" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item label="Locale">
+          <n-input v-model:value="editor.locale" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item label="时区">
+          <n-input v-model:value="editor.timezoneName" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-form-item label="简介">
+          <n-input v-model:value="editor.profileBio" type="textarea" :rows="4" :disabled="disabled || saving" />
+        </n-form-item>
+        <n-alert v-if="ui.editorError" type="error" :title="ui.editorError" />
+        <n-button type="primary" :disabled="disabled || saving" style="margin-top: 12px" @click="submitEditor">
+          {{ saving ? '保存中…' : ui.editorMode === 'create' ? '创建' : '保存' }}
+        </n-button>
+      </n-form>
+    </n-modal>
+  </n-card>
+</template>

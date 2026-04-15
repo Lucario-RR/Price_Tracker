@@ -96,7 +96,7 @@ function createInitialWorkbench() {
     },
     submission: {
       purchaseTime: createLocalDateTimeValue(),
-      purchaseNotes: "Captured from the Vue workbench",
+      purchaseNotes: "Captured from the Nuxt workbench",
       attachmentFileIds: "",
       originalAmount: "1.80",
       originalCurrency: "GBP",
@@ -104,7 +104,7 @@ function createInitialWorkbench() {
       discountCurrency: "GBP",
       discountTypeId: "",
       recordedAt: createLocalDateTimeValue(),
-      priceNotes: "Submitted from the Vue workbench",
+      priceNotes: "Submitted from the Nuxt workbench",
       fileUpload: {
         filename: "receipt.jpg",
         contentType: "image/jpeg",

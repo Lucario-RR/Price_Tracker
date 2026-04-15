@@ -412,7 +412,7 @@ export const ENDPOINTS = [
       shopId: "${shopId}",
       purchaseTime: "${purchaseTimeIso}",
       attachmentFileIds: [],
-      notes: "Captured from the Vue workbench"
+      notes: "Captured from the Nuxt workbench"
     }
   },
   {
@@ -449,7 +449,7 @@ export const ENDPOINTS = [
     bodyTemplate: {
       purchaseTime: "${purchaseTimeIso}",
       attachmentFileIds: [],
-      notes: "Updated from the Vue workbench"
+      notes: "Updated from the Nuxt workbench"
     }
   },
   {
@@ -480,7 +480,7 @@ export const ENDPOINTS = [
       discountCurrency: "${discountCurrency}",
       discountTypeId: "${discountTypeId}",
       recordedAt: "${recordedAtIso}",
-      notes: "Submitted from the Vue workbench"
+      notes: "Submitted from the Nuxt workbench"
     }
   },
   {
@@ -521,7 +521,7 @@ export const ENDPOINTS = [
       discountCurrency: "${discountCurrency}",
       discountTypeId: "${discountTypeId}",
       recordedAt: "${recordedAtIso}",
-      notes: "Updated from the Vue workbench"
+      notes: "Updated from the Nuxt workbench"
     }
   },
   {

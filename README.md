@@ -3,7 +3,7 @@
 This repository now includes:
 
 - `backend/`: an Axum + SQLx backend aligned to the OpenAPI contract in `doc/pricetracker-openapi-3.1.yaml`
-- `frontend/`: a Vue + Vite publish-style dashboard frontend with hidden admin debug modules
+- `frontend/`: a Nuxt + Nuxt UI publish-style dashboard frontend with hidden admin debug modules
 
 The backend is now wired to the v2 SQL schema files in `backend/migrations/`:
 
@@ -60,8 +60,10 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-The Vue frontend now includes:
+The Nuxt frontend now includes:
 
+- a Nuxt 4 app shell with Nuxt UI loaded through `@nuxt/ui`, Tailwind CSS, and the required `UApp` wrapper
+- smooth aspect-ratio-aware layout rules for tall phones, square tablets, laptops, and ultrawide displays
 - a real home page that opens into a dashboard-style application shell
 - a left-side menu that can stay pinned open to keep navigation visible while shrinking the main content area
 - a dedicated login/register page reached from the top-right auth section
@@ -90,6 +92,7 @@ For builds:
 
 - `npm run build` creates the publish-focused build
 - `npm run build:debug` keeps the older explicit debug mode available if you want to ship a more openly diagnostic build
+- `npm run preview` serves the Nuxt production build
 
 ## Notes
 

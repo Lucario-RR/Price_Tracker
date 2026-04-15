@@ -57,7 +57,7 @@ function requestMethods() {
 
     <p v-if="!enabled" class="helper-text">
       The admin dashboard is still available, but the raw explorer stays hidden unless
-      <code>VITE_ENABLE_DEBUG_TOOLS=true</code>.
+      <code>NUXT_PUBLIC_ENABLE_DEBUG_TOOLS=true</code>.
     </p>
 
     <div v-else class="explorer-layout">

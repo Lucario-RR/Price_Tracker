@@ -14,7 +14,7 @@ const model = reactive(useWorkbench());
     <section class="panel hero-panel">
       <div class="hero-copy">
         <p class="eyebrow">PriceTracker Frontend</p>
-        <h1>One Vue page for scanning, capturing, and debugging the whole stack.</h1>
+        <h1>One Nuxt page for scanning, capturing, and debugging the whole stack.</h1>
         <p>
           This frontend keeps your working state locally, retries safe queued jobs
           when the network returns, and gives you a production-safe way to hide
@@ -64,7 +64,7 @@ const model = reactive(useWorkbench());
         </div>
 
         <p class="helper-text">
-          Local development uses a Vite proxy by default, so keeping the base URL
+          Local development uses a Nuxt proxy by default, so keeping the base URL
           at <code>/api/v1</code> avoids CORS friction while you debug.
         </p>
 

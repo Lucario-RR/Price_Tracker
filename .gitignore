@@ -13,3 +13,7 @@
 
 # Ignore local config which contains pwd
 /backend/.env
+
+# Ignore nuxt
+/frontend/.nuxt
+/frontend/.output
